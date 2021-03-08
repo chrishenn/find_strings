@@ -1,0 +1,3 @@
+/home/chris/Documents/deep_mem/frnn_opt_brute/build/CMakeFiles/rebuild_cache.dir
+/home/chris/Documents/deep_mem/frnn_opt_brute/build/CMakeFiles/edit_cache.dir
+/home/chris/Documents/deep_mem/frnn_opt_brute/build/CMakeFiles/frnn_ts.dir
