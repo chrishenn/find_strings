@@ -3,9 +3,6 @@ from PIL import Image
 import matplotlib.pyplot as plt
 
 import numpy as np
-# from nearpy.distances import EuclideanDistance
-# from nearpy.filters import NearestFilter, DistanceThresholdFilter
-
 from numba import njit, prange
 
 import torch as t
@@ -15,8 +12,8 @@ from torchvision import transforms as transforms
 
 from datasets.artificial_dataset import make_topbox, make_topbox_plus, make_nine, make_vbar, make_blob, make_tetris, make_topbar, make_circle_seed
 from frnn_opt_brute import frnn_cpu
-from oomodel import oodl_utils
-from oomodel.oodl_utils import regrid
+from string_finder import oodl_utils
+from string_finder.oodl_utils import regrid
 
 # t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_brute/build/libfrnn_ts.so")
 # t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/write_row/build/libwrite_row.so")
@@ -77,6 +74,152 @@ class Orientation(nn.Module):
         ys = F.conv2d(batch, self.y_kernel, stride=self.stride, padding=self.padding)
 
         return t.atan2(ys, xs + 1e-5)
+
+
+
+class Canny(nn.Module):
+    def __init__(self, opt, thresh_lo, thresh_hi, scale=1, sigma_gauss=None):
+        super().__init__()
+
+        self.low_threshold, self.high_threshold = thresh_lo, thresh_hi
+        self.scale = scale
+        self.sigma_gauss = sigma_gauss
+        self.img_size = opt.img_size
+
+        self.gen_sobel(5)
+        if sigma_gauss is not None: self.gen_gauss(5, sigma=1)
+        self.gen_selection_map()
+        self.gen_hysteresis()
+
+    def gen_selection_map(self):
+        zeros = t.zeros([3,3])
+
+        hori_lf = zeros.clone()
+        hori_rt = zeros.clone()
+        hori_lf[0,1] = 1
+        hori_rt[2,1] = 1
+
+        vert_up = zeros.clone()
+        vert_dn = zeros.clone()
+        vert_up[1,0] = 1
+        vert_dn[1,2] = 1
+
+        diag_tlf = zeros.clone()
+        diag_brt = zeros.clone()
+        diag_tlf[0,0] = 1
+        diag_brt[2,2] = 1
+
+        diag_blf = zeros.clone()
+        diag_trt = zeros.clone()
+        diag_blf[0,2] = 1
+        diag_trt[2,0] = 1
+
+        kernels = t.stack([hori_lf,hori_rt, vert_up,vert_dn, diag_tlf,diag_brt, diag_blf,diag_trt],0).unsqueeze(1)
+
+        self.selection = nn.Conv2d(in_channels=1, out_channels=8,
+                                   kernel_size=3, padding=1, bias=False).requires_grad_(False)
+        self.selection.weight.data = kernels
+
+        selection_ids = t.tensor([[0,1],[4,5],[2,3],[6,7], [0,1],[4,5],[2,3],[6,7]],dtype=t.long)
+        self.register_buffer('selection_ids',selection_ids)
+
+    def gen_sobel(self, k_size):
+
+        range = t.linspace(-(k_size // 2), k_size // 2, k_size)
+        x, y = t.meshgrid(range, range)
+        sobel_2D_numerator = x
+        sobel_2D_denominator = (x.pow(2) + y.pow(2))
+        sobel_2D_denominator[:, k_size // 2] = 1
+        sobel_2D = sobel_2D_numerator / sobel_2D_denominator
+
+        self.sobel_x = nn.Conv2d(1, 1, kernel_size=k_size, padding=k_size // 2, padding_mode='reflect',
+                                 bias=False).requires_grad_(False)
+        self.sobel_y = nn.Conv2d(1,1, kernel_size=k_size, padding=k_size // 2, padding_mode='reflect',
+                                 bias=False).requires_grad_(False)
+        self.sobel_x.weight.data = sobel_2D.clone().t().view(1,1,k_size,k_size)
+        self.sobel_y.weight.data = sobel_2D.view(1,1,k_size,k_size)
+
+    def gen_gauss(self, k_gauss, sigma=0.8):
+
+        D_1 = t.linspace(-1, 1, k_gauss)
+        x, y = t.meshgrid(D_1, D_1)
+        sq_dist = x.pow(2) + y.pow(2)
+
+        # compute the 2 dimension gaussian
+        gaussian = (-sq_dist / (2 * sigma**2)).exp()
+        gaussian = gaussian / (2 * math.pi * sigma**2)
+        gaussian = gaussian / gaussian.sum()
+
+        self.gauss_conv = nn.Conv2d(1,1,kernel_size=k_gauss,
+                                    padding=k_gauss // 2,
+                                    padding_mode='reflect',
+                                    bias=False).requires_grad_(False)
+        self.gauss_conv.weight.data = gaussian.view(1,1,k_gauss,k_gauss)
+
+    def gen_hysteresis(self):
+        self.hysteresis = nn.Conv2d(1, 1, kernel_size=3, padding=1, padding_mode='reflect',
+                                    bias=False).requires_grad_(False)
+        self.hysteresis.weight.data = t.ones((1, 1, 3, 3))
+
+    def forward(self, images):
+
+        ## de-normalize: important
+        if images.min() < -1e-3:
+            images = images.add(1).div(2)
+
+        ## gauss blur
+        if self.sigma_gauss is not None:
+            images = self.gauss_conv(images)
+
+        ## take intensity, flattening color channels to 1-D
+        images = images.norm(p=2, dim=1, keepdim=True)
+
+        ## upsample
+        if self.scale > 1: images = F.interpolate(images, scale_factor=self.scale, mode='area')
+
+        ## take intensity-gradients
+        sobel_x = self.sobel_x(images)
+        sobel_y = self.sobel_y(images)
+
+        grad_mag = (sobel_x.pow(2) + sobel_y.pow(2)).sqrt()
+        grad_phase = t.atan2( sobel_x, sobel_y +1e-5 )
+
+        ## non-maximum suppression
+        grad_phase = grad_phase.div(math.pi/4).round().add(4).fmod(8)
+        grad_phase = grad_phase.long()
+
+        selections = self.selection(grad_mag)
+        neb_ids = self.selection_ids[grad_phase]
+        nebs = selections.gather(1, neb_ids.squeeze().permute(0,3,1,2))
+
+        mask1 = grad_mag < nebs[:,0,None,...]
+        mask2 = grad_mag < nebs[:,1,None,...]
+        mask = mask1 | mask2
+        grad_mag = t.where(mask, t.zeros_like(mask).float(), grad_mag)
+
+        ## downsample to original size
+        if self.scale > 1: grad_mag = F.interpolate(grad_mag, size=self.img_size, mode='nearest')
+
+        ## thresholds, hysteresis
+        mask = grad_mag < self.low_threshold
+        grad_mag = t.where(mask, t.zeros_like(mask).float(), grad_mag)
+        weak_mask = (grad_mag < self.high_threshold) & (grad_mag > self.low_threshold)
+        high_mask = grad_mag > self.high_threshold
+
+        high_nebs = self.hysteresis(high_mask.float())
+        weak_keep = weak_mask & (high_nebs > 0)
+        mask = weak_keep.logical_not() & high_mask.logical_not()
+
+        grad_mag = t.where(mask, t.zeros_like(mask).float(), grad_mag)
+
+        return grad_mag
+
+
+
+
+
+
+
 
 
 
@@ -265,189 +408,7 @@ class OOSampler_Patch(nn.Module):
 
 
 
-
-
-
-def store_sparse_mp_producer(work_q, staged_q, mem_size_tuple, rel_vec_width, lin_rad, mem_width, n_rolls):
-
-    while not work_q.empty():
-
-        try:
-            data = work_q.get(timeout=1)
-
-            rel_vec = build_rel(data, rel_vec_width, lin_rad, mem_width)
-            if n_rolls > 0: rel_vec = roll_rel(rel_vec, n_rolls)
-
-            mem_to_add = sparse.COO(coords=rel_vec.T, data=1, shape=mem_size_tuple)
-            staged_q.put(mem_to_add)
-
-        except: continue
-
-
-def store_sparse_mp_consumer(staged_q, mem_q, mem_lock):
-
-    while True:
-        try:
-            mem_to_add = staged_q.get(timeout=1)
-            mem = mem_q.get(timeout=1)
-
-            with mem_lock:
-                mem += mem_to_add
-
-            mem_q.put(mem)
-
-            staged_q.task_done()
-
-        except queue.Empty: continue
-
-        except Exception as e:
-            print('got unhandled exception in mem-storage consumer thread', e)
-            return
-
-
-
-
-
-
-def query_ann_k_worker(work_q, return_dict, k, index_size, ann_path, ann_type):
-    ann_index = AnnoyIndex(index_size, ann_type)
-    ann_index.load(ann_path, prefault=False)
-
-    while not work_q.empty():
-        try:
-            chunk_id, queries = work_q.get(timeout=1)
-            queries = queries.numpy()
-
-            k_nebs = list()
-            for i, vec in enumerate(queries):
-                k_nebs.append(ann_index.get_nns_by_vector(vec, k, include_distances=True))
-
-            return_dict[chunk_id] = k_nebs
-
-        except: continue
-
-
-
-
-
-
-def build_rel_mp_worker(work_q, staged_q, rel_vec_width, lin_rad, mem_width, n_rolls):
-
-    while not work_q.empty():
-        try:
-            data = work_q.get_nowait()
-            tex,pts,imgid = data
-
-            rel_vec = build_rel(data, rel_vec_width, lin_rad, mem_width)
-            if n_rolls > 0: rel_vec = roll_rel(rel_vec, n_rolls)
-
-            rel_vec = t.from_numpy( rel_vec )
-            if n_rolls > 0: pts_out = pts.repeat(n_rolls, 1)
-            else: pts_out = pts
-
-            staged_q.put( (rel_vec, pts_out) )
-
-        except: continue
-
-
-
-
-
-
-def build_rel(data, rel_vec_width, lin_rad, mem_width):
-    tex,pts,imgid = data
-
-    # rel_vec sizes, edges, vecs, tex's
-    edges = frnn_cpu.frnn_cpu(pts.numpy(), imgid.numpy(), lin_rad)
-    edges = t.from_numpy(edges)
-    edges = t.cat([edges, t.stack([edges[:,1], edges[:,0]], 1)], 0)
-
-    ## vecs in rel_vec will bin to [0, mem_width)
-    locs = pts[:, :2].clone()
-    locs_lf, locs_rt = locs[edges[:, 0]], locs[edges[:, 1]]
-    vecs = locs_rt - locs_lf
-    vecs.div_(lin_rad)
-    vecs.add_(1)
-    vecs.div_(2)
-    vecs.mul_(mem_width)
-    vecs.round_()
-
-    tex = tex.round().to(t.int32)
-    tex_rt = tex[edges[:, 1]]
-
-    args = [tex, tex_rt, vecs, edges[:, 0].contiguous()]
-    args = [te.numpy() for te in args]
-
-    rel_vec = build_rel_cpu( rel_vec_width, *args )
-    return rel_vec
-
-@njit
-def build_rel_cpu(rel_vec_width, tex, tex_rt, vecs, rowids):
-    write_cols = np.ones(tex.shape[0],dtype=np.int32)
-    rel_vec = np.zeros( (tex.shape[0], rel_vec_width),dtype=np.int32)
-
-    rel_vec[:,0] = tex[:,0].copy()
-
-    n_cols = rel_vec.shape[1]
-    n_vecs = vecs.shape[0]
-    for vec_i in range(n_vecs):
-
-        o_id = rowids[vec_i]
-        col = write_cols[o_id]
-
-        if col+2 >= n_cols: continue
-
-        write_cols[o_id] += 3
-
-        vec = vecs[vec_i]
-        vec_tex = tex_rt[vec_i,0]
-
-        rel_vec[o_id, col + 0] = vec[0]
-        rel_vec[o_id, col + 1] = vec[1]
-        rel_vec[o_id, col + 2] = vec_tex
-
-    return rel_vec
-
-
-def roll_rel(rel_vec, n_roll):
-
-    rolled_rel = np.empty_like(rel_vec).repeat(n_roll, axis=0)
-    for i in range(n_roll):
-
-        roll_tmp = rel_vec.copy()
-        home_tex = roll_tmp[:,0]
-        roll_vecs = np.roll(roll_tmp[:, 1:], 3, axis=1)
-        roll_tmp[:,0] = home_tex
-        roll_tmp[:,1:] = roll_vecs
-
-        rolled_rel[i * rel_vec.shape[0] : (i+1) * rel_vec.shape[0], :] = roll_tmp
-
-    return rolled_rel
-
-
-def roll_rel_torch(rel_vec, n_roll):
-
-    rolled_rel = t.empty_like(rel_vec).repeat(n_roll, 1)
-    for i in range(n_roll):
-
-        roll = rel_vec.clone()
-        home_tex = roll[:,0]
-        roll_vecs = roll[:, 1:].roll(3, dims=1)
-        roll[:,0] = home_tex
-        roll[:, 1:] = roll_vecs
-
-        rolled_rel[i * rel_vec.size(0) : (i+1) * rel_vec.size(0), :] = roll
-
-    return rolled_rel
-
-
-
-
-
-
-
-## Deep_mem rel hash
-class Deep_Mem(nn.Module):
+class String_Finder(nn.Module):
     def __init__(self, opt):
         super().__init__()
         self.img_size = opt.img_size
