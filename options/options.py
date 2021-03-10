@@ -20,16 +20,16 @@ class Options_Parent():
 
         self.print_options(opt)
 
-        str_ids = opt.gpu_ids.split(',')
-        opt.gpu_ids = []
+        str_ids = opt.dev_ids.split(',')
+        opt.dev_ids = []
 
-        if len(str_ids) == 1 and str_ids[0] =='cpu':
-            opt.gpu_ids.append( 'cpu' )
+        if len(str_ids) == 1 and (str_ids[0] =='cpu' or str_ids[0] == '-1'):
+            opt.dev_ids.append( 'cpu' )
         else:
             for str_id in str_ids:
                     id = int(str_id)
                     if id >= 0:
-                        opt.gpu_ids.append(id)
+                        opt.dev_ids.append(id)
 
         self.opt = opt
         return self.opt

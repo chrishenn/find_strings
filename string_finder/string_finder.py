@@ -426,7 +426,11 @@ class String_Finder(nn.Module):
 
         edges = self.canny(batch)
 
+        oodl_utils.tensor_imshow(batch[0])
         oodl_utils.tensor_imshow(edges[0])
+
+        oodl_utils.tensor_imshow(batch[1])
+        oodl_utils.tensor_imshow(edges[1])
 
         return None
 

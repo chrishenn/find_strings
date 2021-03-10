@@ -79,10 +79,10 @@ def get_loader(opt, train):
     elif opt.base_dataset == 'mnist':
         dataset = torchvision.datasets.MNIST(root=data_dir, train=datamode_istrain, download=True, transform=transform)
     elif opt.base_dataset == 'tiny-imagenet':
-        if train: dataset = torchvision.datasets.ImageFolder(data_dir + 'tiny-imagenet-200/train', transform)
-        else: dataset = torchvision.datasets.ImageFolder(data_dir + 'tiny-imagenet-200/test', transform)
+        if train: dataset = torchvision.datasets.ImageFolder(os.path.join(data_dir, 'tiny-imagenet-200/train'), transform)
+        else: dataset = torchvision.datasets.ImageFolder(os.path.join(data_dir, 'tiny-imagenet-200/test'), transform)
     elif opt.base_dataset == 'hand_drawn':
-        dataset = torchvision.datasets.ImageFolder(data_dir + 'hand_drawn', transform)
+        dataset = torchvision.datasets.ImageFolder(os.path.join(data_dir, 'hand_drawn'), transform)
     else:
         print('invalid base_dataset indicated; exiting'); exit(1)
 
@@ -137,16 +137,17 @@ def train(model, opt):
             total_batches += 1
 
             inputs, _ = data
+            inputs = inputs.to(opt.dev_ids[0])
 
             with amp.autocast(enabled=opt.amp):
                 model(inputs)
 
             if i % opt.print_freq == 0 or (i+1) == len(loader):
-                print('QUEUEING BATCH: ', i, '/', loader_len)
+                print('BATCH: ', i, '/', loader_len)
 
         print('\n EPOCH: ', epoch)
 
-        if opt.save_freq and (epoch+1)%opt.save_freq == 0:
+        if opt.save_freq is not None and (epoch+1)%opt.save_freq == 0:
             opt.epoch, opt.total_batches = epoch, total_batches
             save_model(model, opt)
 
@@ -164,12 +165,16 @@ def save_model(model, opt):
     if 'sampler.img_filter' in state_dict: del state_dict['sampler.img_filter']
     if 'sampler.pts' in state_dict: del state_dict['sampler.pts']
 
+    if 'canny' in state_dict: del state_dict['canny']
+
     filename = 'epoch_{}_batch_{}.pth'.format(opt.epoch, opt.total_batches)
     save_path = os.path.join(opt.save_dir, filename)
     print('saving model at ', save_path)
 
     t.save(state_dict, save_path)
     print("model save done")
+
+    model.to(opt.dev_ids[0])
 
 
 def init_vis(opt):
@@ -214,6 +219,8 @@ def train_single(opt):
 
     model = string_finder.String_Finder(opt)
     print(model)
+    model = model.to(opt.dev_ids[0])
+
     if opt.load_from is not None:
         print("loading from ", opt.load_from)
 
@@ -229,7 +236,7 @@ def train_single(opt):
 def train_oonet(opt):
     if opt.amp: print("AMP training enabled")
 
-    print("single-device training on device: ", opt.gpu_ids)
+    print("single-device training on device: ", opt.dev_ids)
     train_single(opt)
     exit(0)
 
