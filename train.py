@@ -20,7 +20,7 @@ from datasets.debug_dataset import Debug_Dataset
 from datasets.oneim_dataset import OneIm_Dataset
 from datasets.resizing_dataset import Resizing_Dataset
 
-import oomodel.deep_mem as oodl_model
+import string_finder.string_finder as string_finder
 
 
 
@@ -61,8 +61,8 @@ def get_loader(opt, train):
     else: opt.c_init = 1
 
     tran_list = list()
-    # tran_list.append(transforms.Resize([opt.img_size, opt.img_size], interpolation=PIL.Image.NEAREST))
-    tran_list.append(transforms.Resize([opt.img_size, opt.img_size], interpolation=PIL.Image.BICUBIC))
+    if opt.img_resize is not None:
+        tran_list.append(transforms.Resize([opt.img_resize, opt.img_resize], interpolation=PIL.Image.NEAREST))
     if rand_rotate:
         tran_list.append(transforms.RandomRotation(180, expand=False, resample=PIL.Image.BICUBIC))
 
@@ -81,6 +81,8 @@ def get_loader(opt, train):
     elif opt.base_dataset == 'tiny-imagenet':
         if train: dataset = torchvision.datasets.ImageFolder(data_dir + 'tiny-imagenet-200/train', transform)
         else: dataset = torchvision.datasets.ImageFolder(data_dir + 'tiny-imagenet-200/test', transform)
+    elif opt.base_dataset == 'hand_drawn':
+        dataset = torchvision.datasets.ImageFolder(data_dir + 'hand_drawn', transform)
     else:
         print('invalid base_dataset indicated; exiting'); exit(1)
 
@@ -146,17 +148,9 @@ def train(model, opt):
 
         if opt.save_freq and (epoch+1)%opt.save_freq == 0:
             opt.epoch, opt.total_batches = epoch, total_batches
-
-            model.coalesce()
             save_model(model, opt)
 
         print("epoch time: ", time.time() - epoch_time, "\n\n")
-
-        print("shutting down storage process pool ...")
-        model.shutdown()
-
-        print("building ann index ...")
-        model.build_ann(None)
 
 
 
@@ -170,16 +164,9 @@ def save_model(model, opt):
     if 'sampler.img_filter' in state_dict: del state_dict['sampler.img_filter']
     if 'sampler.pts' in state_dict: del state_dict['sampler.pts']
 
-    if 'edges' in state_dict: del state_dict['edges']
-    if 'vecs' in state_dict: del state_dict['vecs']
-    if 'rel_vec' in state_dict: del state_dict['rel_vec']
-    if 'write_cols' in state_dict: del state_dict['write_cols']
-
     filename = 'epoch_{}_batch_{}.pth'.format(opt.epoch, opt.total_batches)
     save_path = os.path.join(opt.save_dir, filename)
     print('saving model at ', save_path)
-
-    if hasattr(model, 'mem'): state_dict['mem'] = model.mem
 
     t.save(state_dict, save_path)
     print("model save done")
@@ -190,7 +177,7 @@ def init_vis(opt):
     # a tmux session and navigate to localhost:8097 in a browser.
 
     if opt.vis_network or opt.vis_file:
-        from oomodel.oodl_vis import OODL_Vis
+        from string_finder.oodl_vis import OODL_Vis
 
         try: vis = OODL_Vis(opt)
         except: vis = None
@@ -208,10 +195,12 @@ def init_environment(opt):
     if opt.profile: opt.n_threads = 1
 
     # torch.multiprocessing.set_start_method('forkserver', force=True)
-    torch.multiprocessing.set_start_method('spawn', force=True)
+    # torch.multiprocessing.set_start_method('spawn', force=True)
 
-    torch.cuda.manual_seed_all(7)
-    torch.manual_seed(7)
+    # torch.cuda.manual_seed_all(7)
+    # torch.manual_seed(7)
+
+    # torch.set_num_threads(2)
 
 
 
@@ -223,26 +212,18 @@ def train_single(opt):
 
     opt.train_loader = get_loader(opt, True)
 
-    model = oodl_model.Deep_Mem(opt)
+    model = string_finder.String_Finder(opt)
     print(model)
     if opt.load_from is not None:
         print("loading from ", opt.load_from)
 
-        # model.load_state_dict( t.load(opt.load_from), strict=False )
-
-        ##
-        sdict = t.load(opt.load_from)
-        model.load_state_dict(sdict, strict=False)
-        if 'mem' in sdict: model.mem = sdict['mem']
-        if 'config_stack' in sdict: model.config_stack = sdict['config_stack']
-        if 'values' in sdict: model.values = sdict['values']
+        model.load_state_dict( t.load(opt.load_from), strict=False )
 
         print("load done")
 
     tic = time.time()
     train(model, opt)
     print('ran ', opt.n_epochs, ' epochs in ', time.time() - tic)
-    exit(0)
 
 ##### Entry Point: Luanch Training Loop for Configuration
 def train_oonet(opt):

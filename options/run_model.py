@@ -18,14 +18,16 @@ class Options(Options_Parent):
         parser.add_argument('--debug',    type=bool, default=False, help='debug ')
 
         # data options
+        parser.add_argument('--base_dataset', type=str, default='hand_drawn', help='chooses what datasets are loaded.')
         # parser.add_argument('--base_dataset', type=str, default='cifar', help='chooses what datasets are loaded.')
-        parser.add_argument('--base_dataset', type=str, default='mnist', help='chooses what datasets are loaded.')
+        # parser.add_argument('--base_dataset', type=str, default='mnist', help='chooses what datasets are loaded.')
         # parser.add_argument('--base_dataset', type=str, default='tiny-imagenet', help='chooses what datasets are loaded.')
 
-        parser.add_argument('--oneim_dataset', type=bool, default=True, help='')
+        parser.add_argument('--oneim_dataset', type=bool, default=False, help='')
 
         parser.add_argument('--data_dir',     type=str, default='/home/chris/Documents/oodl_local/data/', help='chooses what datasets are loaded.')
-        parser.add_argument('--img_size',     type=int, default=32, help='square image; integer size for one side')
+        parser.add_argument('--img_size',     type=int, default=600, help='square image; integer size for one side')
+        parser.add_argument('--img_resize',     type=int, default=None, help='')
 
         parser.add_argument('--train_datamode', type=str,  default='train', help='train data mode: set to "train" for training-set; set to "test" for test set')
         parser.add_argument('--train_size',     type=int,  default=5000, help='specify dataset size in images - at least 1/30th of the full size. Set "None" for full size.')
