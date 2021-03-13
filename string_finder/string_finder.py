@@ -12,8 +12,10 @@ from torchvision import transforms as transforms
 
 from datasets.artificial_dataset import make_topbox, make_topbox_plus, make_nine, make_vbar, make_blob, make_tetris, make_topbar, make_circle_seed
 from frnn_opt_brute import frnn_cpu
-from string_finder import oodl_utils
+from string_finder import oodl_utils, oodl_draw
 from string_finder.oodl_utils import regrid
+
+t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_brute/build/libfrnn_ts.so")
 
 # t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_brute/build/libfrnn_ts.so")
 # t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/write_row/build/libwrite_row.so")
@@ -192,7 +194,7 @@ class Canny(nn.Module):
 
         selections = self.selection(grad_mag)
         neb_ids = self.selection_ids[grad_phase]
-        nebs = selections.gather(1, neb_ids.squeeze().permute(0,3,1,2))
+        nebs = selections.gather(1, neb_ids[:,0,...].permute(0,3,1,2))
 
         mask1 = grad_mag < nebs[:,0,None,...]
         mask2 = grad_mag < nebs[:,1,None,...]
@@ -214,7 +216,7 @@ class Canny(nn.Module):
 
         grad_mag = t.where(mask, t.zeros_like(mask).float(), grad_mag)
 
-        return grad_mag
+        return grad_mag, t.cat([sobel_y, sobel_x], 1)
 
 
 
@@ -418,19 +420,31 @@ class String_Finder(nn.Module):
 
         self.opt = opt
 
-        thresh_lo, thresh_hi = 0.5, 0.8
+        thresh_lo, thresh_hi = 2, 3
         self.canny = Canny(opt, thresh_lo, thresh_hi)
 
 
     def forward(self, batch):
 
-        edges = self.canny(batch)
+        batch_size = t.tensor(batch.size(0), device=batch.device)
+
+        b_edges, sobel = self.canny(batch)
 
         oodl_utils.tensor_imshow(batch[0])
-        oodl_utils.tensor_imshow(edges[0])
+        oodl_utils.tensor_imshow(b_edges[0])
 
-        oodl_utils.tensor_imshow(batch[1])
-        oodl_utils.tensor_imshow(edges[1])
+        edge_ends = b_edges.nonzero()
+        imgid = edge_ends[:,0]
+        locs = edge_ends[:, -2:].float().contiguous()
+
+        edges = t.ops.my_ops.frnn_ts_kernel(locs, imgid, t.tensor(1.01).cuda(), t.tensor(1).cuda(), batch_size)[0]
+        dev = t.zeros_like(edges[:,0])
+
+        ids = edge_ends.split(1, dim=1)
+        norms = sobel[ ids[0], :, ids[2], ids[3] ]
+        norms = norms.squeeze().div( norms.squeeze().norm(dim=1)[:,None] )
+
+        oodl_draw.oodl_draw(0, locs, imgid, edges=edges, o_vectors=norms, max=self.opt.img_size)
 
         return None
 

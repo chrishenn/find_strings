@@ -18,7 +18,8 @@ class Options(Options_Parent):
         parser.add_argument('--debug',    type=bool, default=False, help='debug ')
 
         # data options
-        parser.add_argument('--base_dataset', type=str, default='hand_drawn', help='chooses what datasets are loaded.')
+        parser.add_argument('--base_dataset', type=str, default='hand_drawn_1', help='chooses what datasets are loaded.')
+
         # parser.add_argument('--base_dataset', type=str, default='cifar', help='chooses what datasets are loaded.')
         # parser.add_argument('--base_dataset', type=str, default='mnist', help='chooses what datasets are loaded.')
         # parser.add_argument('--base_dataset', type=str, default='tiny-imagenet', help='chooses what datasets are loaded.')
@@ -39,7 +40,7 @@ class Options(Options_Parent):
         # training options
         parser.add_argument('--n_epochs',  type=int,   default=1, help='number of training epochs')
 
-        parser.add_argument('--batch_size',   type=int, default=6, help='batch size')
+        parser.add_argument('--batch_size',   type=int, default=1, help='batch size')
 
         # compute options
         parser.add_argument('--dev_ids',   type=str,  default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use cpu or -1 for CPU')

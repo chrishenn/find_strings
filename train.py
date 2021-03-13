@@ -81,8 +81,8 @@ def get_loader(opt, train):
     elif opt.base_dataset == 'tiny-imagenet':
         if train: dataset = torchvision.datasets.ImageFolder(os.path.join(data_dir, 'tiny-imagenet-200/train'), transform)
         else: dataset = torchvision.datasets.ImageFolder(os.path.join(data_dir, 'tiny-imagenet-200/test'), transform)
-    elif opt.base_dataset == 'hand_drawn':
-        dataset = torchvision.datasets.ImageFolder(os.path.join(data_dir, 'hand_drawn'), transform)
+    elif 'hand_drawn' in opt.base_dataset:
+        dataset = torchvision.datasets.ImageFolder(os.path.join(data_dir, opt.base_dataset), transform)
     else:
         print('invalid base_dataset indicated; exiting'); exit(1)
 
