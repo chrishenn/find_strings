@@ -135,6 +135,7 @@ class Canny(nn.Module):
         sobel_2D_denominator = (x.pow(2) + y.pow(2))
         sobel_2D_denominator[:, k_size // 2] = 1
         sobel_2D = sobel_2D_numerator / sobel_2D_denominator
+        sobel_2D.div_(6)
 
         self.sobel_x = nn.Conv2d(1, 1, kernel_size=k_size, padding=k_size // 2, padding_mode='reflect',
                                  bias=False).requires_grad_(False)
@@ -177,6 +178,7 @@ class Canny(nn.Module):
 
         ## take intensity, flattening color channels to 1-D
         images = images.norm(p=2, dim=1, keepdim=True)
+        images.div_(images.max())
 
         ## upsample
         if self.scale > 1: images = F.interpolate(images, scale_factor=self.scale, mode='area')
@@ -196,7 +198,7 @@ class Canny(nn.Module):
         neb_ids = self.selection_ids[grad_phase]
         nebs = selections.gather(1, neb_ids[:,0,...].permute(0,3,1,2))
 
-        mask1 = grad_mag < nebs[:,0,None,...]
+        mask1 = grad_mag <= nebs[:,0,None,...]  # using one gradient-direction-neighbor as a tiebreaker
         mask2 = grad_mag < nebs[:,1,None,...]
         mask = mask1 | mask2
         grad_mag = t.where(mask, t.zeros_like(mask).float(), grad_mag)
@@ -207,7 +209,9 @@ class Canny(nn.Module):
         ## thresholds, hysteresis
         mask = grad_mag < self.low_threshold
         grad_mag = t.where(mask, t.zeros_like(mask).float(), grad_mag)
+
         weak_mask = (grad_mag < self.high_threshold) & (grad_mag > self.low_threshold)
+
         high_mask = grad_mag > self.high_threshold
 
         high_nebs = self.hysteresis(high_mask.float())
@@ -420,7 +424,7 @@ class String_Finder(nn.Module):
 
         self.opt = opt
 
-        thresh_lo, thresh_hi = 2, 3
+        thresh_lo, thresh_hi = 0.00, 0.00
         self.canny = Canny(opt, thresh_lo, thresh_hi)
 
 
@@ -430,7 +434,7 @@ class String_Finder(nn.Module):
 
         b_edges, sobel = self.canny(batch)
 
-        oodl_utils.tensor_imshow(batch[0])
+        # oodl_utils.tensor_imshow(batch[0])
         oodl_utils.tensor_imshow(b_edges[0])
 
         edge_ends = b_edges.nonzero()
@@ -444,7 +448,7 @@ class String_Finder(nn.Module):
         norms = sobel[ ids[0], :, ids[2], ids[3] ]
         norms = norms.squeeze().div( norms.squeeze().norm(dim=1)[:,None] )
 
-        oodl_draw.oodl_draw(0, locs, imgid, edges=edges, o_vectors=norms, max=self.opt.img_size)
+        # oodl_draw.oodl_draw(0, locs, imgid, edges=edges, draw_obj=True, o_vectors=norms, max_size=self.opt.img_size, o_scale=1)
 
         return None
 

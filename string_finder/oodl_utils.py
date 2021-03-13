@@ -34,7 +34,7 @@ def regrid(texture, pts, imgid, img_size, batch=None, avg=True):
 
     return batch
 
-def tensor_imshow(img, dpi=300, axis='off'):
+def tensor_imshow(img, dpi=150, axis='off'):
     img = img.cpu()
     img = img.sub( img.min() )
     img = img.div( img.max() ).clamp(0,1)

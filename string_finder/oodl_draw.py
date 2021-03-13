@@ -12,7 +12,7 @@ import cv2
 
 
 
-def oodl_draw(visimg_id, pts, imgid, img=None, edges=None, as_vecs=None, o_vectors=None, groupids=None, draw_obj=False, match_edge_grp_color=False, max=32, linewidths=0.01, dpi=300):
+def oodl_draw(visimg_id, pts, imgid, img=None, edges=None, as_vecs=None, o_vectors=None, groupids=None, draw_obj=False, o_scale=1, max_size=32, linewidths=0.01, dpi=150):
     '''
     Each element to draw is composited onto a singular canvas, and is drawn from the image given by visimg_id, indexed into
         the batch of images included in pts and imgid. Each row of imgid provides an img id for the object in that row in pts.
@@ -29,7 +29,7 @@ def oodl_draw(visimg_id, pts, imgid, img=None, edges=None, as_vecs=None, o_vecto
 
     draw_obj=bool: [draw objects] draw each object in each row of pts as [y, x, z, angle, size, <n/a>]
 
-    max=float/int: max size of underlying image corresponding to drawn inputs
+    max_size=float/int: max size of underlying image corresponding to drawn inputs
     linewidths=float/int: thicknesses of edges and vector stems
     dpi=int: dpi resolution of output image
     '''
@@ -37,8 +37,8 @@ def oodl_draw(visimg_id, pts, imgid, img=None, edges=None, as_vecs=None, o_vecto
     magnify = 25
     fig, ax = plt.subplots(dpi=dpi)
 
-    ymax = max * magnify
-    xmax = max * magnify
+    ymax = max_size * magnify
+    xmax = max_size * magnify
     ax.set_aspect('equal')
     ax.set_ylim(ymax, 0)
     ax.set_xlim(0, xmax)
@@ -70,7 +70,7 @@ def oodl_draw(visimg_id, pts, imgid, img=None, edges=None, as_vecs=None, o_vecto
 
         colors = None
         if draw_obj:
-            draw_objects(ax, pts_im, xmax, ymax, magnify)
+            draw_objects(ax, pts_im, xmax, ymax, magnify, o_scale)
         if groupids is not None:
             groupids = groupids.clone().detach().cpu()
             palette = t.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1, 0], dtype=t.long)
@@ -95,13 +95,13 @@ def oodl_draw(visimg_id, pts, imgid, img=None, edges=None, as_vecs=None, o_vecto
     plt.show(block=False)
 
 
-def draw_objects(ax, pts_im, xmax, ymax, magnify):
+def draw_objects(ax, pts_im, xmax, ymax, magnify, o_scale):
 
     # y, x, z, angle, size, <n/a>
     if pts_im.size(1) > 2:
-        kp_list = [cv2.KeyPoint(y=object[0].item(), x=object[1].item(), _angle=np.rad2deg(object[3].item()), _size=object[4].item()) for object in pts_im]
+        kp_list = [cv2.KeyPoint(y=object[0].item(), x=object[1].item(), _angle=np.rad2deg(object[3].item()), _size=object[4].item()*o_scale) for object in pts_im]
     else:
-        kp_list = [cv2.KeyPoint(y=object[0].item(), x=object[1].item(), _angle=0, _size=magnify) for object in pts_im]
+        kp_list = [cv2.KeyPoint(y=object[0].item(), x=object[1].item(), _angle=0, _size=magnify*o_scale) for object in pts_im]
 
     topil = transforms.ToPILImage()
     img = t.full([3,xmax,ymax], 0, dtype=t.uint8)
