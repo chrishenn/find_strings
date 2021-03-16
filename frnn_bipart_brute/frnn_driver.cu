@@ -1,14 +1,5 @@
 /**
-Authors: Christian Henn, Qianli Liao
 
-Implements the Fixed-Radius Nearest-Neighbor (frnn) algorithm [Qianli Liao and David Walter]. Parallel exclusive scan code adapted from [Matt Dean - 1422434 - mxd434].
-
-This file relies on Pytorch calls from the Pytorch C++ API.
-
- NOTE:
- cuda __global__ kernels can be included from a .cu file by adding a declaration in this file, where the call is. The kernels will be compiled and found no
- problem (as long as the names are unique?). HOWEVER, templated __global__ kernels CANNOT be included in this way - the kernel call with the AT_DISPATCH macro
- and the kernel it's calling MUST be in the same file, or else python will throw an "unknown symbol" error.
 **/
 
 #include <torch/types.h>
@@ -62,7 +53,7 @@ double get_nanos() {
 
 
 template <typename scalar_t>
-__global__ void frnn_brute_lin_kernel(
+__global__ void frnn_brute_bipart_kernel(
         const scalar_t* pts,
         const int       pts_size0,
         const int       pts_size1,
@@ -76,7 +67,9 @@ __global__ void frnn_brute_lin_kernel(
               int*  glob_count,
 
         const float lin_radius,
-        const float scale_radius
+        const float scale_radius,
+
+        const long* pair_ids
 ){
     int imid = blockIdx.x;
     int row_end = col_counts[imid];
@@ -88,6 +81,13 @@ __global__ void frnn_brute_lin_kernel(
             int ptid_a = lookup_table[row_a * lookup_size1 + imid];
             int ptid_b = lookup_table[row_b * lookup_size1 + imid];
 
+            // filter pts in the same pair (part of the same string)
+            int pairid_a = pair_ids[ptid_a];
+            int pairid_b = pair_ids[ptid_b];
+
+            if (pairid_a == pairid_b) continue;
+
+            // filter by distance
             float ay = float( pts[ptid_a * pts_size1 + 0] );
             float ax = float( pts[ptid_a * pts_size1 + 1] );
 
@@ -98,12 +98,10 @@ __global__ void frnn_brute_lin_kernel(
             float diffx = bx - ax;
 
             float dist_cc = sqrtf( diffx*diffx + diffy*diffy );
-//            float dist = dist_cc - (as / 2) - (bs / 2);
 
-//            bool check = (dist < lin_radius);
-            bool check = (dist_cc < lin_radius);
+            bool valid = (dist_cc < lin_radius);
 
-            if (check)
+            if (valid)
             {
                 int thread_i = atomicAdd(glob_count, 2);
                 edges[thread_i + 0] = long(ptid_a);
@@ -145,6 +143,8 @@ __host__ std::vector<torch::Tensor> frnn_ts_call(
 
     torch::Tensor lin_radius,
     torch::Tensor scale_radius,
+
+    torch::Tensor pair_ids,
 
     torch::Tensor batch_size
 ) {
@@ -203,7 +203,7 @@ __host__ std::vector<torch::Tensor> frnn_ts_call(
     ); CudaCheckError();
 
     AT_DISPATCH_FLOATING_TYPES_AND(torch::ScalarType::Half, pts.scalar_type(), "frnn_brute_kernel", ([&] {
-        frnn_brute_lin_kernel<<<blocks, threads>>>(
+        frnn_brute_bipart_kernel<<<blocks, threads>>>(
             pts.data_ptr<scalar_t>(),
             pts.size(0),
             pts.size(1),
@@ -217,7 +217,9 @@ __host__ std::vector<torch::Tensor> frnn_ts_call(
             glob_count.data_ptr<int>(),
 
             lin_radius.item<float>(),
-            scale_radius.item<float>()
+            scale_radius.item<float>(),
+
+            pair_ids.data_ptr<long>()
 
     ); })); CudaCheckError();
 

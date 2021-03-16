@@ -16,8 +16,8 @@ from string_finder import oodl_utils, oodl_draw
 from string_finder.oodl_utils import regrid
 
 t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_brute/build/libfrnn_ts.so")
+t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_brute/build/libfrnn_ts.so")
 
-# t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_brute/build/libfrnn_ts.so")
 # t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/write_row/build/libwrite_row.so")
 
 t.manual_seed(7)
@@ -424,31 +424,82 @@ class String_Finder(nn.Module):
 
         self.opt = opt
 
-        thresh_lo, thresh_hi = 0.00, 0.00
+        thresh_lo, thresh_hi = 0.1, 0.1
         self.canny = Canny(opt, thresh_lo, thresh_hi)
 
 
     def forward(self, batch):
 
+        #### detect canny-edges, connect them, select norms from canny sites
         batch_size = t.tensor(batch.size(0), device=batch.device)
-
         b_edges, sobel = self.canny(batch)
-
-        # oodl_utils.tensor_imshow(batch[0])
-        oodl_utils.tensor_imshow(b_edges[0])
 
         edge_ends = b_edges.nonzero()
         imgid = edge_ends[:,0]
         locs = edge_ends[:, -2:].float().contiguous()
 
-        edges = t.ops.my_ops.frnn_ts_kernel(locs, imgid, t.tensor(1.01).cuda(), t.tensor(1).cuda(), batch_size)[0]
-        dev = t.zeros_like(edges[:,0])
+        edges = t.ops.my_ops.frnn_ts_kernel(locs, imgid, t.tensor(np.sqrt(2)+0.01).cuda(), t.tensor(1).cuda(), batch_size)[0]
 
         ids = edge_ends.split(1, dim=1)
         norms = sobel[ ids[0], :, ids[2], ids[3] ]
         norms = norms.squeeze().div( norms.squeeze().norm(dim=1)[:,None] )
 
-        # oodl_draw.oodl_draw(0, locs, imgid, edges=edges, draw_obj=True, o_vectors=norms, max_size=self.opt.img_size, o_scale=1)
+        #### compose initial strings
+        ## strs[i] = [ end_lf[y,x], end_rt[y,x], str_norm[dy,dx], dev-%, len-pix ]
+        locs_lf, locs_rt = locs[edges[:,0]], locs[edges[:,1]]
+
+        norms_lf, norms_rt = norms[edges[:,0]], norms[edges[:,1]]
+        norms = norms_lf.add( norms_rt ).div(2)
+
+        strs = t.cat([ locs_lf, locs_rt, norms, t.zeros_like(edges[:,0,None]),  locs_lf.sub(locs_rt).norm(dim=1,keepdim=True) ], 1)
+
+        # oodl_draw.oodl_draw(0, strs=strs, max_size=self.opt.img_size)
+
+
+        #### merging
+
+        ## original strings become root nodes in search tree. These unmerged strings represent the choice to 'not merge', and thus should remain in the tree for
+        # subsequent comparisons.
+
+        ## for enough steps to reach an arbitrary tree depth:
+            ## for each neighboring pair of strings, generate a possible combined string.
+
+            ## a string cannot merge with any parent, since a string represents all space covered by all parents.
+
+            ## increase the search size for neighboring strings proportional to their size
+
+        ## generate scores for each node on the tree
+
+        ## extract best strings from pruned tree.
+
+
+
+        depth = 6
+        n_strs = strs.size(0)
+
+
+
+
+        ## find edges between the ends of edges - excluding my own other string-end
+
+        all_ends = t.cat([locs_lf, locs_rt])
+        pair_ids = t.arange(n_strs,device=locs_lf.device).repeat(2)
+        imgid = t.zeros_like(all_ends[:,0]).long()                          ## TODO: support batching
+        edges_from_all_ends = t.ops.fb_op.frnnb_kern(all_ends, imgid, t.tensor(0.5).cuda(), t.tensor(1).cuda(), pair_ids, batch_size)[0]
+
+
+        ## generate possible combined strings
+        connecting_pt_lf, connecting_pt_rt = all_ends[edges_from_all_ends[:,0]], all_ends[edges_from_all_ends[:,1]]
+
+        edges_to_strs = t.where(edges_from_all_ends.ge(n_strs), edges_from_all_ends.sub(n_strs), edges_from_all_ends)
+        strs_lf, strs_rt = strs[edges_to_strs[:,0]], strs[edges_to_strs[:,1]]
+
+
+
+
+
+
+
 
         return None
 

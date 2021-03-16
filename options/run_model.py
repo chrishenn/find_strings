@@ -18,7 +18,7 @@ class Options(Options_Parent):
         parser.add_argument('--debug',    type=bool, default=False, help='debug ')
 
         # data options
-        parser.add_argument('--base_dataset', type=str, default='hand_drawn_1', help='chooses what datasets are loaded.')
+        parser.add_argument('--base_dataset', type=str, default='hand_drawn_2', help='chooses what datasets are loaded.')
 
         # parser.add_argument('--base_dataset', type=str, default='cifar', help='chooses what datasets are loaded.')
         # parser.add_argument('--base_dataset', type=str, default='mnist', help='chooses what datasets are loaded.')

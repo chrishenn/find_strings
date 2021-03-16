@@ -12,7 +12,8 @@ import cv2
 
 
 
-def oodl_draw(visimg_id, pts, imgid, img=None, edges=None, as_vecs=None, o_vectors=None, groupids=None, draw_obj=False, o_scale=1, max_size=32, linewidths=0.01, dpi=150):
+def oodl_draw(visimg_id, pts=None, imgid=None, img=None, edges=None, as_vecs=None, o_vectors=None, strs=None, groupids=None, draw_obj=False,
+                         o_scale=1, max_size=32, linewidths=0.01, dpi=150):
     '''
     Each element to draw is composited onto a singular canvas, and is drawn from the image given by visimg_id, indexed into
         the batch of images included in pts and imgid. Each row of imgid provides an img id for the object in that row in pts.
@@ -54,19 +55,20 @@ def oodl_draw(visimg_id, pts, imgid, img=None, edges=None, as_vecs=None, o_vecto
         # img.putalpha(alpha)
         plt.imshow(img)
 
-    if draw_obj or (edges is not None) or (as_vecs is not None) or (groupids is not None):
+    if draw_obj or (edges is not None) or (as_vecs is not None) or (groupids is not None) or (strs is not None):
 
-        pts_full = pts.clone().detach().cpu()
-        imgid = imgid.clone().detach().cpu()
+        if (pts is not None) or (imgid is not None):
+            pts_full = pts.clone().detach().cpu()
+            imgid = imgid.clone().detach().cpu()
 
-        pts_full[:,:2].add_(0.5)
-        if pts_full.size(1) > 2:
-            pts_full[:,[0,1,2,4]] = pts_full[:,[0,1,2,4]].mul(magnify)
-        else:
-            pts_full[:,:2] = pts_full[:,:2].mul(magnify)
+            pts_full[:,:2].add_(0.5)
+            if pts_full.size(1) > 2:
+                pts_full[:,[0,1,2,4]] = pts_full[:,[0,1,2,4]].mul(magnify)
+            else:
+                pts_full[:,:2] = pts_full[:,:2].mul(magnify)
 
-        im_mask = imgid.eq(visimg_id)
-        pts_im = pts_full[im_mask]
+            im_mask = imgid.eq(visimg_id)
+            pts_im = pts_full[im_mask]
 
         colors = None
         if draw_obj:
@@ -91,6 +93,11 @@ def oodl_draw(visimg_id, pts, imgid, img=None, edges=None, as_vecs=None, o_vecto
             vecs_im = o_vectors[im_mask]
             vecs_im.mul_(magnify)
             draw_o_vectors(ax, pts_im, vecs_im, linewidths, magnify)
+        if strs is not None:
+            strs = strs.cpu()
+            strs.mul_(magnify)
+            draw_strs(ax, strs, linewidths, magnify)
+
 
     plt.show(block=False)
 
@@ -167,3 +174,31 @@ def draw_o_vectors(ax, pts_im, vecs_im, linewidths, magnify):
     h_size = linewidths*magnify*36
     ax.quiver(locs_lf[:,1], locs_lf[:,0], vectors[:,1], vectors[:,0], angles='xy', units='xy', scale=1, width=linewidths*magnify,
               color=colors, headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1)
+
+
+def draw_strs(ax, strs, linewidths, magnify):
+
+    palette = t.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1, 1], dtype=t.long)
+    colors = t.arange(strs.size(0))[:,None].float().mul(palette).fmod(255).div(255)
+    colors[:,3] = 1
+    colors = colors.numpy()
+
+    norm_locs = strs[:,:2].add(strs[:,2:4]).div(2)
+
+    h_size = linewidths*magnify*36
+    ax.quiver(norm_locs[:,1], norm_locs[:,0], strs[:,5], strs[:,4], angles='xy', units='xy', scale=1, width=linewidths*magnify,
+              color=colors, headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1)
+
+    locs_lf, locs_rt = t.stack([strs[:,1], strs[:,0]],1), t.stack([ strs[:,3], strs[:,2] ],1)
+    lc = mc.LineCollection(list(zip(locs_lf.numpy(), locs_rt.numpy())), linewidths=linewidths*magnify)
+    ax.add_collection(lc)
+
+
+
+
+
+
+
+
+
+
