@@ -17,6 +17,7 @@ from string_finder.oodl_utils import regrid
 
 t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_brute/build/libfrnn_ts.so")
 t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_brute/build/libfrnn_ts.so")
+t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_tree_brute/build/libfrnn_ts.so")
 
 # t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/write_row/build/libwrite_row.so")
 
@@ -430,6 +431,29 @@ class String_Finder(nn.Module):
 
     def forward(self, batch):
 
+        ################################
+        batch_size = t.tensor(batch.size(0), device=batch.device)
+        depth = 6
+
+        locs = t.arange(6, device=0)
+        locs = t.cartesian_prod(locs, locs).float()
+
+        tree_table = t.zeros([locs.size(0)//2, locs.size(0)//2 * depth], dtype=t.uint8, device=locs.device)
+        tree_table[1,7], tree_table[2,7],tree_table[3,7], tree_table[4,7],tree_table[5,7], tree_table[6,7], = 1,1,1,1,1,1
+
+        pair_ids = t.arange(locs.size(0)//2, device=locs.device).repeat(2)
+        imgid = t.zeros_like(locs[:, 0]).long()
+        edges = t.ops.fbt_op.fbt_kern(locs, imgid, t.tensor(3.10).cuda(), t.tensor(1.0).cuda(), pair_ids, tree_table, batch_size)[0]
+
+        oodl_draw.oodl_draw(0, locs, imgid, edges=edges, max_size=8)
+
+        [te for te in locs]
+        [te for te in tree_table]
+
+        ################################
+
+
+
         #### detect canny-edges, connect them, select norms from canny sites
         batch_size = t.tensor(batch.size(0), device=batch.device)
         b_edges, sobel = self.canny(batch)
@@ -477,15 +501,18 @@ class String_Finder(nn.Module):
         depth = 6
         n_strs = strs.size(0)
 
+        # each row gives a node's inheritance. A '1' in a row gives a parent, whose id is the column-id in which the '1' appears
+        tree_table = t.zeros([n_strs, n_strs * depth], dtype=t.uint8, device=strs.device)
 
 
 
-        ## find edges between the ends of edges - excluding my own other string-end
+
+        ## find edges between the ends of edges - excluding my own other string-end, and excluding any parents I inherit from
 
         all_ends = t.cat([locs_lf, locs_rt])
         pair_ids = t.arange(n_strs,device=locs_lf.device).repeat(2)
         imgid = t.zeros_like(all_ends[:,0]).long()                          ## TODO: support batching
-        edges_from_all_ends = t.ops.fb_op.frnnb_kern(all_ends, imgid, t.tensor(0.5).cuda(), t.tensor(1).cuda(), pair_ids, batch_size)[0]
+        edges_from_all_ends = t.ops.fbt_op.fbt_kern(all_ends, imgid, t.tensor(0.5).cuda(), t.tensor(1).cuda(), pair_ids, tree_table, batch_size)[0]
 
 
         ## generate possible combined strings
