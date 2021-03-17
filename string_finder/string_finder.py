@@ -431,29 +431,31 @@ class String_Finder(nn.Module):
 
     def forward(self, batch):
 
+        ## TEST ################################
+
+        # batch_size = t.tensor(batch.size(0), device=batch.device)
+        # depth = 6
+        #
+        # locs = t.tensor([1, 3, 5, 7], dtype=t.long, device=0)
+        # locs = t.cartesian_prod(locs, locs).float()
+        # tree_table = t.zeros([locs.size(0) // 2, locs.size(0) // 2 * depth], dtype=t.uint8, device=locs.device)
+        # tree_table[0,1], tree_table[4,1] = 1,1
+        #
+        # pair_ids = t.arange(locs.size(0) // 2, device=locs.device).repeat(2)
+        # imgid = t.zeros_like(locs[:, 0]).long()
+        # edges = t.ops.fbt_op.fbt_kern(locs, imgid, t.tensor(4+0.2).cuda(), t.tensor(1.0).cuda(), pair_ids, tree_table, batch_size)[0]
+        # oodl_draw.oodl_draw(0, locs, imgid, draw_obj=True, as_vecs=edges, max_size=12)
+        #
+        # ##
+        #
+        # [te for te in locs]
+        # [te for te in tree_table]
+        # [(te.item(), te1) for (te, te1) in zip(pair_ids, locs)]
+
         ################################
-        batch_size = t.tensor(batch.size(0), device=batch.device)
-        depth = 6
-
-        locs = t.arange(6, device=0)
-        locs = t.cartesian_prod(locs, locs).float()
-
-        tree_table = t.zeros([locs.size(0)//2, locs.size(0)//2 * depth], dtype=t.uint8, device=locs.device)
-        tree_table[1,7], tree_table[2,7],tree_table[3,7], tree_table[4,7],tree_table[5,7], tree_table[6,7], = 1,1,1,1,1,1
-
-        pair_ids = t.arange(locs.size(0)//2, device=locs.device).repeat(2)
-        imgid = t.zeros_like(locs[:, 0]).long()
-        edges = t.ops.fbt_op.fbt_kern(locs, imgid, t.tensor(3.10).cuda(), t.tensor(1.0).cuda(), pair_ids, tree_table, batch_size)[0]
-
-        oodl_draw.oodl_draw(0, locs, imgid, edges=edges, max_size=8)
-
-        [te for te in locs]
-        [te for te in tree_table]
-
-        ################################
 
 
-
+        ###### Initial Detection and building primitives
         #### detect canny-edges, connect them, select norms from canny sites
         batch_size = t.tensor(batch.size(0), device=batch.device)
         b_edges, sobel = self.canny(batch)
@@ -480,50 +482,66 @@ class String_Finder(nn.Module):
         # oodl_draw.oodl_draw(0, strs=strs, max_size=self.opt.img_size)
 
 
-        #### merging
+        ###### merging
 
+        ### PSEUDOCODE #############
         ## original strings become root nodes in search tree. These unmerged strings represent the choice to 'not merge', and thus should remain in the tree for
-        # subsequent comparisons.
+        # subsequent scoring.
 
         ## for enough steps to reach an arbitrary tree depth:
-            ## for each neighboring pair of strings, generate a possible combined string.
+            ## for each neighboring (qualified) pair of strings, generate a possible combined string.
+            ## "Similarity Score": compute the similarity score for strings that could possibly merge; store in tree-node for possible new string
 
             ## a string cannot merge with any parent, since a string represents all space covered by all parents.
+            ## strings that share a parent cannot merge for the same reason.
 
             ## increase the search size for neighboring strings proportional to their size
 
-        ## generate scores for each node on the tree
+        ## "Underlying Data Scores": generate scores for each node on the tree
 
-        ## extract best strings from pruned tree.
+        ## extract best-scored strings from pruned tree.
+        ### ################
 
 
 
         depth = 6
         n_strs = strs.size(0)
 
-        # each row gives a node's inheritance. A '1' in a row gives a parent, whose id is the column-id in which the '1' appears
+        ## each row gives a node's inheritance. A '1' in a row gives a parent, whose id is the column-id in which the '1' appears
+        ## since each node (string) has two ends, the tree_table will necessarily have half as many rows as there are locations
         tree_table = t.zeros([n_strs, n_strs * depth], dtype=t.uint8, device=strs.device)
-
-
-
 
         ## find edges between the ends of edges - excluding my own other string-end, and excluding any parents I inherit from
 
         all_ends = t.cat([locs_lf, locs_rt])
         pair_ids = t.arange(n_strs,device=locs_lf.device).repeat(2)
-        imgid = t.zeros_like(all_ends[:,0]).long()                          ## TODO: support batching
+        ## TODO: support batching
+        imgid = t.zeros_like(all_ends[:,0]).long()
+
+
+
+        ## TODO: iterate
+
+        ## fbt_kern filters out connections between string-ends that will violate inhertiance rules; strings who share a parent or inherit from each other
         edges_from_all_ends = t.ops.fbt_op.fbt_kern(all_ends, imgid, t.tensor(0.5).cuda(), t.tensor(1).cuda(), pair_ids, tree_table, batch_size)[0]
 
 
-        ## generate possible combined strings
+
+
+        ## generate possible combined strings from valid edges_from_all_ends
         connecting_pt_lf, connecting_pt_rt = all_ends[edges_from_all_ends[:,0]], all_ends[edges_from_all_ends[:,1]]
 
         edges_to_strs = t.where(edges_from_all_ends.ge(n_strs), edges_from_all_ends.sub(n_strs), edges_from_all_ends)
         strs_lf, strs_rt = strs[edges_to_strs[:,0]], strs[edges_to_strs[:,1]]
 
+        # draw a straight line between the endpoints of the possible string
+        # string deviation direction is referenced to string normal
+        # new string deviation is generated by max perp dist from straight-line, given by other possible endpoints - not current deviations
 
 
+        ## TODO: similarity scores will be generated here
 
+        ## TODO: update tree_table, pair_ids, all_ends, imgid
 
 
 
