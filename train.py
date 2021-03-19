@@ -115,8 +115,8 @@ def get_loader(opt, train):
     if scale:
         dataset = Resizing_Dataset(opt, scale, dataset)
         collate_fn = scale_aware_collator
-    if opt.debug:
-        dataset = Debug_Dataset(opt, dataset)
+    # if opt.debug:
+    #     dataset = Debug_Dataset(opt, dataset)
 
     loader = torch.utils.data.DataLoader(dataset, batch_size=opt.batch_size, shuffle=shuffle, num_workers=opt.n_threads, pin_memory=False, collate_fn=collate_fn, drop_last=True)
     return loader
@@ -194,10 +194,11 @@ def init_environment(opt):
     torch.backends.cudnn.enabled = True
     torch.backends.cudnn.benchmark = True
 
-    if opt.profile: os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+    if opt.debug: os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
     else:           os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
 
-    if opt.profile: opt.n_threads = 1
+    if opt.debug: opt.n_threads = 1
+
 
     # torch.multiprocessing.set_start_method('forkserver', force=True)
     # torch.multiprocessing.set_start_method('spawn', force=True)

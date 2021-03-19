@@ -5,7 +5,7 @@ import argparse
 import warnings
 warnings.filterwarnings("ignore")
 
-class Options_Parent():
+class Options_Super():
 
     def parse(self):
 

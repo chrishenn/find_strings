@@ -52,9 +52,9 @@ double get_nanos() {
 
 
 
-//template <typename scalar_t>
+template <typename scalar_t>
 __global__ void frnn_brute_bipart_tree_kernel(
-        const float* pts,
+        const scalar_t* pts,
         const int       pts_size0,
         const int       pts_size1,
 
@@ -64,7 +64,8 @@ __global__ void frnn_brute_bipart_tree_kernel(
         const int* col_counts,
 
               long* edges,
-              int*  glob_count,
+//              long* glob_count,
+              unsigned long long int* glob_count,
 
         const float lin_radius,
         const float scale_radius,
@@ -115,9 +116,9 @@ __global__ void frnn_brute_bipart_tree_kernel(
 
             if (dist_cc < lin_radius)
             {
-                int thread_i = atomicAdd(glob_count, 2);
-                edges[thread_i + 0] = long(ptid_a);
-                edges[thread_i + 1] = long(ptid_b);
+//                int thread_i = atomicAdd(glob_count, 2);
+//                edges[thread_i + 0] = long(ptid_a);
+//                edges[thread_i + 1] = long(ptid_b);
             }
         }
     }
@@ -195,7 +196,11 @@ __host__ std::vector<torch::Tensor> frnn_ts_call(
     auto edges_size1 = 2;
 
     auto edges = torch::empty({edges_size0.item<int>(), edges_size1}, l_options);
-    auto glob_count = torch::zeros({1}, i_options);
+//    auto glob_count = torch::zeros({1}, l_options);
+
+    unsigned long long int* glob_count;
+    cudaMalloc((void**)&glob_count, sizeof(unsigned long long int));
+    cudaMemset((void*)glob_count, 0, sizeof(unsigned long long int));
 
     auto im_counts = imgid.bincount();
     auto lookup_size0 = im_counts.max().item<int>();
@@ -215,18 +220,9 @@ __host__ std::vector<torch::Tensor> frnn_ts_call(
             col_counts.data_ptr<int>()
     ); CudaCheckError();
 
-//    const size_t shared = (2 * threads.x * tree_table.size(1)) * sizeof(u_int8_t);
-//    printf("%lu \n",shared);
-//
-//    if ( shared > 49152 ){
-//        fprintf(stderr, "ERROR coll_nebs_driver.cu: FRNN_MAIN_KERNEL ATTEMPTED TO ALLOCATE TOO MUCH SHARED MEMORY FOR YOUR DEVICE ARCH; DECREASE OBJECT-DENSITY");
-//        fprintf(stderr, "attemped: %li bytes; max supported: 49152 bytes\n", shared);
-//        exit(EXIT_FAILURE);
-//    }
-
-//    AT_DISPATCH_FLOATING_TYPES_AND(torch::ScalarType::Half, pts.scalar_type(), "frnn_brute_kernel", ([&] {
+    AT_DISPATCH_FLOATING_TYPES_AND(torch::ScalarType::Half, pts.scalar_type(), "frnn_brute_kernel", ([&] {
         frnn_brute_bipart_tree_kernel<<<blocks, threads>>>(
-            pts.data_ptr<float>(),
+            pts.data_ptr<scalar_t>(),
             pts.size(0),
             pts.size(1),
 
@@ -236,7 +232,8 @@ __host__ std::vector<torch::Tensor> frnn_ts_call(
             col_counts.data_ptr<int>(),
 
             edges.data_ptr<long>(),
-            glob_count.data_ptr<int>(),
+//            glob_count.data_ptr<long>(),
+            glob_count,
 
             lin_radius.item<float>(),
             scale_radius.item<float>(),
@@ -245,25 +242,25 @@ __host__ std::vector<torch::Tensor> frnn_ts_call(
 
             tree_table.data_ptr<u_int8_t>(),
             tree_table.size(1)
+    ); })); CudaCheckError();
 
-    );
-//})); CudaCheckError();
+//    unsigned long long int edge_count = unsigned long long int (*glob_count / 2);
 
-    auto edge_count = glob_count.floor_divide(2);
-    if ( edge_count.gt(edges_size0).item<int>() ){
+//    auto edge_count = glob_count.floor_divide(2);
+//    if ( edge_count.gt(edges_size0).item<long>() ){
+//
+//        fprintf (stderr, "ERROR frnn_driver.cu: FRNN_MAIN_KERNEL ATTEMPTED TO WRITE MORE EDGES THAN SPACE WAS ALLOCATED FOR\n");
+//        fprintf (stderr, "attemped: %i edges; allocated: %i edges\n", edge_count.item<long>(), edges_size0.item<long>());
+//
+//        std::string err_mode;
+//        if (sq_max.item<long>() < hyp.item<long>())
+//            err_mode = "sq_max";
+//        else err_mode = "hyp";
+//        fprintf (stderr, "error mode: %s\n", err_mode.c_str());
+//        exit(EXIT_FAILURE);
+//    }
 
-        fprintf (stderr, "ERROR frnn_driver.cu: FRNN_MAIN_KERNEL ATTEMPTED TO WRITE MORE EDGES THAN SPACE WAS ALLOCATED FOR\n");
-        fprintf (stderr, "attemped: %i edges; allocated: %i edges\n", edge_count.item<int>(), edges_size0.item<int>());
-
-        std::string err_mode;
-        if (sq_max.item<int>() < hyp.item<int>())
-            err_mode = "sq_max";
-        else err_mode = "hyp";
-        fprintf (stderr, "error mode: %s\n", err_mode.c_str());
-        exit(EXIT_FAILURE);
-    }
-
-    edges = edges.narrow(0, 0, edge_count.item<int>());
+//    edges = edges.narrow(0, 0, edge_count.item<int>());
     return {edges};
 }
 

@@ -1,21 +1,21 @@
-import warnings
-warnings.filterwarnings("ignore")
+# import warnings
+# warnings.filterwarnings("ignore")
 
-import os
-import sys
+import os, sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from options.run_options import Options_Super
 import train
 
-from options.options import Options_Parent
 
 
-class Options(Options_Parent):
+class Options(Options_Super):
 
     def initialize(self, parser):
 
         parser.add_argument('--exp_name', type=str,   default='hand_drawn', help='')
 
-        parser.add_argument('--debug',    type=bool, default=False, help='debug ')
+        parser.add_argument('--debug',    type=bool, default=True, help='debug ')
 
         # data options
         parser.add_argument('--base_dataset', type=str, default='hand_drawn_2', help='chooses what datasets are loaded.')
