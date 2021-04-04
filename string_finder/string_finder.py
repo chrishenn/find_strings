@@ -470,27 +470,34 @@ class String_Finder(nn.Module):
         norms = norms.squeeze().div( norms.squeeze().norm(dim=1)[:,None] )
 
         #### compose initial strings
-        ## strs[i] = [ end_lf[y,x], end_rt[y,x], str_norm[dy,dx], dev-%, len-pix ]
+        ## strs[i] = [ end_lf[y,x], end_rt[y,x], str_norm[dy,dx], dev-frac ]
         locs_lf, locs_rt = locs[edges[:,0]], locs[edges[:,1]]
 
         norms_lf, norms_rt = norms[edges[:,0]], norms[edges[:,1]]
         norms = norms_lf.add( norms_rt ).div(2)
 
-        strs = t.cat([ locs_lf, locs_rt, norms, t.zeros_like(edges[:,0,None]),  locs_lf.sub(locs_rt).norm(dim=1,keepdim=True) ], 1)
+        strs = t.cat([ locs_lf, locs_rt, norms, t.zeros_like(edges[:,0,None]) ], 1)
+
+
+        ## TEST ################################
+        oodl_draw.oodl_draw(0, draw_obj=False, strs=strs, max_size=self.opt.img_size)
+        ################################
+
+
+
 
 
         ###### MERGING TREE
 
         ### PSEUDOCODE #############
-        ## original strings become root nodes in search tree. These unmerged strings represent the choice to 'not merge', and thus should remain in the tree for
-        # subsequent scoring.
+        ## original strings become root nodes in search tree. These unmerged strings represent the choice to 'not merge', and thus should remain in the tree for subsequent scoring.
 
         ## for enough steps to reach an arbitrary tree depth:
             ## for each neighboring (qualified) pair of strings, generate a possible combined string.
             ## "Similarity Score": compute the similarity score for strings that could possibly merge; store in tree-node for possible new string
 
-            ## a string cannot merge with any parent, since a string represents all space covered by all parents.
-            ## strings that share a parent cannot merge for the same reason.
+            ## a string cannot merge with any parent.
+            ## strings that share a parent cannot merge.
 
             ## increase the search size for neighboring strings proportional to their size
 
@@ -500,87 +507,142 @@ class String_Finder(nn.Module):
         ### ################
 
 
-        ## TODO: iterate start
+
 
         depth = 6
         n_strs = strs.size(0)
 
-        ## each row gives a node's inheritance. A '1' in a row gives a parent, whose id is the column-id in which the '1' appears
-        ## since each node (string) has two ends, the tree_table will necessarily have half as many rows as there are locations
+        ## each row gives a str's inheritance. A '1' in a row gives a parent, whose id is the column-id in which the '1' appears
         tree_table = t.zeros([n_strs, n_strs * depth], dtype=t.uint8, device=dev)
 
-        ## find edges between the ends of edges - excluding my own other string-end, and excluding any parents I inherit from
-
-        all_ends = t.cat([locs_lf, locs_rt])
-        pair_ids = t.arange(n_strs,device=locs_lf.device).repeat(2)
-        ## TODO: support batching
-        imgid = t.zeros_like(all_ends[:,0]).long()
 
 
+        for _ in range(3):
 
-
-        ## find edges from all string-ends
-        edges_from_all_ends = t.ops.my_ops.frnn_ts_kernel(all_ends, imgid, t.tensor(0.5).cuda(), t.tensor(1).cuda(), batch_size)[0]
-
-        pairids_lf, pairids_rt = pair_ids[edges_from_all_ends[:,0]], pair_ids[edges_from_all_ends[:,1]]
-
-        # filter ends that define the same string
-        same_str = pairids_lf.eq( pairids_rt )
-
-        # filter ends that share an ancestor-string
-        share_ancester = (tree_table[pairids_lf] & tree_table[pairids_rt]).sum(dim=1).bool()
-
-        # filter ends that inherit from each other
-        inherit_lfrt = tree_table[pairids_lf].gather(1, pairids_rt[:,None]).squeeze().bool()
-        inherit_rtlf = tree_table[pairids_rt].gather(1, pairids_lf[:,None]).squeeze().bool()
-
-        end_edges = edges_from_all_ends[ (same_str | share_ancester | inherit_lfrt | inherit_rtlf).logical_not() ]
-
-
-        ## generate possible combined strings from valid end_edges
-        ends_lf, ends_rt = all_ends[end_edges[:,0]], all_ends[end_edges[:,1]]
-
-
-        ## NOTE: assumes strings' ends are mirrored across the halfway-row of all_ends
-        ## where end_edges.ge(n_strs) gives locs_rt in strs
-        pairids_lf, pairids_rt = pair_ids[end_edges[:, 0]], pair_ids[end_edges[:, 1]]
-
-        other_endpt_cols_lf = t.where( end_edges[:,0].ge(n_strs)[:,None], t.tensor([[2,3]],device=dev).repeat(end_edges.size(0), 1), t.tensor([[0,1]],device=dev).repeat(end_edges.size(0), 1) )
-        other_endpt_cols_rt = t.where( end_edges[:,1].ge(n_strs)[:,None], t.tensor([[2,3]],device=dev).repeat(end_edges.size(0), 1), t.tensor([[0,1]],device=dev).repeat(end_edges.size(0), 1) )
-        other_endpts_lf = strs[pairids_lf].gather(1, other_endpt_cols_rt)
-        other_endpts_rt = strs[pairids_rt].gather(1, other_endpt_cols_lf)
-
-
-        ## TEST ################################
-        # pts_lf = t.cat([ends_lf, other_endpts_lf])
-        # pair_ids = t.arange(pts_lf.size(0)//2, device=locs_lf.device)[:,None].repeat(1,2)
-        # pair_ids[:,1].add_(pts_lf.size(0)//2)
-        # oodl_draw.oodl_draw(0, pts_lf, t.zeros_like(pts_lf[:,0]).long(), draw_obj=False, edges=pair_ids, max_size=self.opt.img_size)
-        #
-        # pts_rt = t.cat([ends_rt, other_endpts_rt])
-        # pair_ids = t.arange(pts_rt.size(0)//2, device=locs_rt.device)[:,None].repeat(1,2)
-        # pair_ids[:,1].add_(pts_rt.size(0)//2)
-        # oodl_draw.oodl_draw(0, pts_rt, t.zeros_like(pts_rt[:,0]).long(), draw_obj=False, edges=pair_ids, max_size=self.opt.img_size)
-        ################################
-
-
-        # draw a straight line between the farther endpoints of the possible string
-        # string deviation direction is referenced to string normal
-        # new string deviation is generated by max perp dist from straight-line, given by other possible endpoints - not current deviations
-        ## TODO: generate possible string from edges that are farther away, but some other ends of those strings are close together?
+            all_ends = t.cat([strs[:,[0,1]], strs[:,[2,3]]])
+            pair_ids = t.arange(n_strs, device=strs.device).repeat(2)
+            ## TODO: support batching
+            imgid = t.zeros_like(all_ends[:,0]).long()
 
 
 
+            ## find edges from all string-ends
+            edges_from_all_ends = t.ops.my_ops.frnn_ts_kernel(all_ends, imgid, t.tensor(0.5).cuda(), t.tensor(1).cuda(), batch_size)[0]
+
+            pairids_lf, pairids_rt = pair_ids[edges_from_all_ends[:,0]], pair_ids[edges_from_all_ends[:,1]]
+
+            # filter ends that define the same string
+            same_str = pairids_lf.eq( pairids_rt )
+
+            # filter ends that share an ancestor-string
+            tree_lf, tree_rt = tree_table[pairids_lf], tree_table[pairids_rt]
+            share_ancester = (tree_lf & tree_rt).sum(dim=1).bool()
+
+            # filter ends that inherit from each other
+            inherit_lfrt = tree_lf.gather(1, pairids_rt[:,None]).squeeze().bool()
+            inherit_rtlf = tree_rt.gather(1, pairids_lf[:,None]).squeeze().bool()
+
+            end_edges = edges_from_all_ends[ (same_str | share_ancester | inherit_lfrt | inherit_rtlf).logical_not() ]
+
+
+            ## generate possible combined strings from valid end_edges
+            close_ends_lf, close_ends_rt = all_ends[end_edges[:,0]], all_ends[end_edges[:,1]]
+
+            pairids_lf, pairids_rt = pair_ids[end_edges[:, 0]], pair_ids[end_edges[:, 1]]
+
+            other_endpt_cols_lf = t.where( end_edges[:,0].ge(n_strs)[:,None], t.tensor([[2,3]],device=dev).repeat(end_edges.size(0), 1), t.tensor([[0,1]],device=dev).repeat(end_edges.size(0), 1) )
+            other_endpt_cols_rt = t.where( end_edges[:,1].ge(n_strs)[:,None], t.tensor([[2,3]],device=dev).repeat(end_edges.size(0), 1), t.tensor([[0,1]],device=dev).repeat(end_edges.size(0), 1) )
+            far_ends_lf = strs[pairids_lf].gather(1, other_endpt_cols_rt)
+            far_ends_rt = strs[pairids_rt].gather(1, other_endpt_cols_lf)
+
+
+
+            ## TEST ################################
+            ## filter distance = 0
+            # not_coincident = F.pairwise_distance(far_ends_lf, far_ends_rt).gt(1e-3)
+            # other_ends_lf, other_ends_rt = other_ends_lf[not_coincident], other_ends_rt[not_coincident]
+
+            ## ends_lf and ends_rt are neighboring string-ends that are  close together
+            # neb_locs = t.cat([close_ends_lf, close_ends_rt])
+            # pair_ids = t.arange(neb_locs.size(0)//2, device=locs_rt.device)[:,None].repeat(1,2)
+            # pair_ids[:,1].add_(neb_locs.size(0)//2)
+            # oodl_draw.oodl_draw(0, neb_locs, t.zeros_like(neb_locs[:,0]).long(), draw_obj=False, edges=pair_ids, max_size=self.opt.img_size)
+
+            ## other_ends_lf and other_ends_rt span the farthest-away extremes of strings whose ends have found neighbors. sometimes they are coincident
+            # neb_locs = t.cat([far_ends_lf, far_ends_rt])
+            # pair_ids = t.arange(neb_locs.size(0)//2, device=locs_rt.device)[:,None].repeat(1,2)
+            # pair_ids[:,1].add_(neb_locs.size(0)//2)
+            # oodl_draw.oodl_draw(0, neb_locs, t.zeros_like(neb_locs[:,0]).long(), draw_obj=False, as_vecs=pair_ids, max_size=self.opt.img_size)
+            ################################
+
+
+            # draw a "straight-line" between the farther endpoints (far_ends_lf/far_ends_rt) of the neighboring strings
+            # string deviation direction is referenced to string normal. normal points toward center of curvature.
+            # new string deviation is generated by avg perp dists from straight-line seg to other possible endpoints (not current deviations)
+            # new string normal is avg direction of the two contributing strings
+
+
+            ##### filter out zero-length string possibles
+            seg_lens = F.pairwise_distance(far_ends_lf, far_ends_rt)
+            not_coinc = seg_lens.gt(1e-3)
+
+            ## filter tree_lf and tree_rt
+            tree_lf, tree_rt = tree_lf[not_coinc], tree_rt[not_coinc]
+
+            ## filter distances and endpoints
+            seg_lens = seg_lens[not_coinc]
+            close_ends_lf, close_ends_rt = close_ends_lf[not_coinc], close_ends_rt[not_coinc]
+            far_ends_lf, far_ends_rt = far_ends_lf[not_coinc], far_ends_rt[not_coinc]
+
+            ## filter pair_ids; needed for inheritance
+            pairids_lf, pairids_rt = pairids_lf[not_coinc], pairids_rt[not_coinc]
+
+            ## filtered string normals
+            norm_cols = t.tensor([[4, 5]], device=dev).repeat(pairids_lf.size(0), 1)
+            seg_norms_lf, seg_norms_rt = strs[pairids_lf].gather(1, norm_cols), strs[pairids_rt].gather(1, norm_cols)
+
+
+            #### generate new possible strings
+            ## deviation_pt describes the location of deviation from straight-line connection between string far-ends
+            deviation_pt = close_ends_lf.add(close_ends_rt).div(2)
+
+            ## new deviation frac of merged string will be the right-angle deviation of deviation_pt to straight-line connection, relative to straight-line seg length
+            test_pts = deviation_pt
+            dev_dist = ( (far_ends_rt[:,1] - far_ends_lf[:,1]) * (far_ends_lf[:,0] - test_pts[:,0]) )  -  ( (far_ends_lf[:,1] - test_pts[:,1]) * (far_ends_rt[:,0] - far_ends_lf[:,0]) )
+            dev_dist.div_(seg_lens)
+
+            new_dev_fracs = dev_dist.div(seg_lens)
+
+            ## new string normals
+            new_str_norms = seg_norms_lf.add(seg_norms_rt).div(2)
+            new_str_norms.div_( new_str_norms.norm(dim=1, keepdim=True) )
+
+            ## pack new strs datastrct
+            new_strs = t.cat([ far_ends_lf, far_ends_rt, new_str_norms, new_dev_fracs[:,None] ], 1)
+
+            ## TEST ################################
+            oodl_draw.oodl_draw(0, draw_obj=False, strs=new_strs, max_size=self.opt.img_size, dot_locs=t.cat([far_ends_lf,far_ends_rt]))
+            ################################
+
+
+
+            #### update tree_table; each new string inherits ancestors from both parents; just elemwise add their rows from tree_table
+            tree_table_append = tree_lf.add(tree_rt)
+            assert max( pairids_lf.max(), pairids_rt.max()) < tree_table_append.size(1)
+
+            pairids_lf.unsqueeze_(1), pairids_rt.unsqueeze_(1)
+            tree_table_append.scatter_(1, pairids_lf, t.ones_like(pairids_lf).to(t.uint8))
+            tree_table_append.scatter_(1, pairids_rt, t.ones_like(pairids_rt).to(t.uint8))
+
+            tree_table = t.cat([tree_table, tree_table_append])
+            assert tree_table.size(0) < tree_table.size(1)
+
+            print("no")
 
 
 
 
-
-        ## TODO: similarity scores will be generated here
-
-        ## TODO: update tree_table, pair_ids, all_ends, imgid
-
-
+        ## TODO: after tree is built, generate similarity scores and filter out bad strings
 
 
         return None

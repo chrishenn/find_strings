@@ -12,7 +12,7 @@ import cv2
 
 
 
-def oodl_draw(visimg_id, pts=None, imgid=None, img=None, edges=None, as_vecs=None, o_vectors=None, strs=None, groupids=None, draw_obj=False,
+def oodl_draw(visimg_id, pts=None, imgid=None, img=None, edges=None, as_vecs=None, o_vectors=None, strs=None, groupids=None, draw_obj=False, dot_locs=None,
                          o_scale=1, max_size=32, linewidths=0.01, dpi=150):
     '''
     Each element to draw is composited onto a singular canvas, and is drawn from the image given by visimg_id, indexed into
@@ -55,7 +55,7 @@ def oodl_draw(visimg_id, pts=None, imgid=None, img=None, edges=None, as_vecs=Non
         # img.putalpha(alpha)
         plt.imshow(img)
 
-    if draw_obj or (edges is not None) or (as_vecs is not None) or (groupids is not None) or (strs is not None):
+    if draw_obj or (edges is not None) or (as_vecs is not None) or (groupids is not None) or (strs is not None) or (dot_locs is not None):
 
         if (pts is not None) or (imgid is not None):
             pts_full = pts.clone().detach().cpu()
@@ -97,7 +97,10 @@ def oodl_draw(visimg_id, pts=None, imgid=None, img=None, edges=None, as_vecs=Non
             strs = strs.cpu()
             strs.mul_(magnify)
             draw_strs(ax, strs, linewidths, magnify)
-
+        if dot_locs is not None:
+            dot_locs = dot_locs.mul(magnify)
+            dot_locs = dot_locs.cpu()
+            draw_dots(ax, dot_locs, magnify)
 
     plt.show(block=False)
 
@@ -193,6 +196,10 @@ def draw_strs(ax, strs, linewidths, magnify):
     lc = mc.LineCollection(list(zip(locs_lf.numpy(), locs_rt.numpy())), linewidths=linewidths*magnify)
     ax.add_collection(lc)
 
+def draw_dots(ax, dot_locs, magnify):
+    dot_locs = dot_locs.numpy()
+
+    ax.scatter(dot_locs[:,1], dot_locs[:,0], s=magnify/2, alpha=0.5, marker=".")
 
 
 
