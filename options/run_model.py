@@ -43,7 +43,7 @@ class Options(Options_Super):
         parser.add_argument('--batch_size',   type=int, default=1, help='batch size')
 
         # compute options
-        parser.add_argument('--dev_ids',   type=str,  default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use cpu or -1 for CPU')
+        parser.add_argument('--dev_ids',   type=str,  default='1', help='gpu ids: e.g. 0  0,1,2, 0,2. use cpu or -1 for CPU')
         parser.add_argument('--n_threads', type=int,  default=2, help='data loader cpu threads for each process.')
 
         parser.add_argument('--amp',            type=bool, default=False, help='turn amp on or off')
