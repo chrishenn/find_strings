@@ -27,23 +27,43 @@ def str_draw(strs, linewidths=0.01, dpi=150, max_size=32):
     locs_lf, locs_rt = strs[:,:2], strs[:, 2:4]
     vecs = locs_rt.sub( locs_lf )
 
-    #### spl_locs running directly from lf->rt
-    # offsets = t.linspace(0, 1, 20)[None].repeat(vecs.size(0), 1).to(dev)
-    # offsets.mul_( vecs.norm(dim=1, keepdim=True) )
-    #
-    # vecs.div_( vecs.norm(dim=1, keepdim=True) )
-    # spl_locs = vecs[:,None].mul( offsets[...,None] ).add(locs_lf[:,None])
-
     ### spl_locs include some deviation dev-frac
     dev_fracs = strs[:,-1]
+
     seg_centers = locs_rt.add(locs_lf).div(2)
-    seg_norms = vecs.clone()
-    seg_norms[:,1].mul_(-1)
-    seg_norms.div_( vecs.norm(dim=1, keepdim=True) )
 
-    dev_dists = dev_fracs.mul( vecs.norm(dim=1) )
 
-    dev_locs = seg_norms.mul(dev_dists[:,None]).add(seg_centers)
+    ##########
+    dev_dists = dev_fracs.div( vecs.norm(dim=1) )
+
+    # seg_norms = vecs.clone()
+    # seg_norms.div_(seg_norms.norm(dim=1, keepdim=True)).mul_(mag)
+    # seg_norms[:,1].mul_(-1)
+    # dev_locs = seg_norms.mul(dev_dists[:,None]).add(seg_centers)
+
+
+    seg_norms = vecs.div( vecs.norm(dim=1, keepdim=True) )
+    seg_norms = t.cat([seg_norms, t.zeros_like(seg_norms[:, 0, None])], 1)
+    unit_z = t.tensor([[0.,0.,1.]]).repeat(seg_norms.size(0), 1).to(dev)
+    seg_norms = t.cross(seg_norms, unit_z)[:, :-1]
+    seg_norms.mul_(mag)
+
+
+    h_size = linewidths*mag*36
+    ax.quiver(locs_lf.cpu().numpy()[:,1], locs_lf.cpu().numpy()[:,0], vecs[:,1].cpu().numpy(), vecs[:,0].cpu().numpy(), angles='xy', units='xy', scale=1, width=linewidths*mag,
+              headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1)
+
+    color = t.zeros([seg_norms.size(0), 4], dtype=t.float)
+    color[:,[1,3]] = 1
+
+    ax.quiver(seg_centers.cpu().numpy()[:,1], seg_centers.cpu().numpy()[:,0], seg_norms[:,1].cpu().numpy(), seg_norms[:,0].cpu().numpy(), angles='xy', units='xy', scale=1, width=linewidths*mag,
+              headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=color.numpy())
+
+    ax.scatter(seg_centers.cpu().numpy()[:, 1], seg_centers.cpu().numpy()[:, 0], s=mag, alpha=1, marker=".")
+
+    plt.show(block=False)
+
+    ##########
 
 
     x_proj_dist = vecs.matmul( t.tensor([[0.],[1.]]).to(dev) )
@@ -63,18 +83,18 @@ def str_draw(strs, linewidths=0.01, dpi=150, max_size=32):
         uids = uids.unique()
         y = y[uids]
 
-        if x.size(0) < 2: continue
+        if x.size(0) < 3: continue
 
         spl = sinterp.make_interp_spline(x, y, k=2)
         interp_y = spl(interp_x[i])
 
         ax.plot(interp_x[i], interp_y)
 
-
     h_size = linewidths*mag*36
     ax.quiver(dev_locs[:,1], dev_locs[:,0], strs[:,5].cpu().numpy(), strs[:,4].cpu().numpy(), angles='xy', units='xy', scale=1, width=linewidths*mag,
               headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1)
 
+    ax.scatter(dev_locs[:,1], dev_locs[:,0], s=mag, alpha=1, marker=".")
 
     plt.show(block=False)
     print("no")
