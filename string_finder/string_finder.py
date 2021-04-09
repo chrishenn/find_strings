@@ -2,6 +2,8 @@ import atexit, math, os, time, PIL
 from PIL import Image
 import matplotlib.pyplot as plt
 
+
+
 import numpy as np
 from numba import njit, prange
 
@@ -14,6 +16,7 @@ from datasets.artificial_dataset import make_topbox, make_topbox_plus, make_nine
 from frnn_opt_brute import frnn_cpu
 from string_finder import oodl_utils, oodl_draw
 from string_finder.oodl_utils import regrid
+from string_finder.str_draw import str_draw
 from unionfind.unionfind import UnionFind
 
 t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_brute/build/libfrnn_ts.so")
@@ -471,6 +474,7 @@ class String_Finder(nn.Module):
         norms = sobel[ ids[0], :, ids[2], ids[3] ]
         norms = norms.squeeze().div( norms.squeeze().norm(dim=1)[:,None] )
 
+
         #### compose initial strings
         ## strs[i] = [ end_lf[y,x], end_rt[y,x], str_norm[dy,dx], dev-frac ]
         locs_lf, locs_rt = locs[edges[:,0]], locs[edges[:,1]]
@@ -482,7 +486,10 @@ class String_Finder(nn.Module):
 
 
         ## TEST ################################
-        oodl_draw.oodl_draw(0, draw_obj=False, strs=strs, max_size=self.opt.img_size)
+        # oodl_draw.oodl_draw(0, strs=strs, max_size=self.opt.img_size)
+        b_edges[b_edges.gt(0)] = 1
+
+        # str_draw(strs, max_size=self.opt.img_size)
         ################################
 
 
@@ -506,7 +513,7 @@ class String_Finder(nn.Module):
         ## extract best-scored strings from pruned tree.
         ### ################
 
-        depth = 3
+        depth = 2
 
         ## each row gives a str's inheritance. A '1' in a row gives a parent, whose id is the column-id in which the '1' appears
         # tree_table = t.zeros([strs.size(0), strs.size(0) * 6], dtype=t.uint8, device='cpu')
@@ -514,6 +521,7 @@ class String_Finder(nn.Module):
         tree_table = UnionFind()
         [tree_table.add(i) for i in range(strs.size(0))]
 
+        rads = [1, 2]
 
         for i in range(depth):
 
@@ -524,7 +532,7 @@ class String_Finder(nn.Module):
 
 
             ## find edges from all string-ends
-            end_edges = t.ops.my_ops.frnn_ts_kernel(all_ends, imgid, t.tensor( (i+1)**2 ).cuda(), t.tensor(1).cuda(), batch_size)[0]
+            end_edges = t.ops.my_ops.frnn_ts_kernel(all_ends, imgid, t.tensor( rads[i] ).cuda(), t.tensor(1).cuda(), batch_size)[0]
 
             str_edges = t.where(end_edges.ge(strs.size(0)), end_edges.sub(strs.size(0)), end_edges)
 
@@ -598,8 +606,7 @@ class String_Finder(nn.Module):
             test_pts = deviation_pt
             dev_dist = ( (far_ends_rt[:,1] - far_ends_lf[:,1]) * (far_ends_lf[:,0] - test_pts[:,0]) )  -  ( (far_ends_lf[:,1] - test_pts[:,1]) * (far_ends_rt[:,0] - far_ends_lf[:,0]) )
             dev_dist.div_(seg_lens)
-
-            new_dev_fracs = dev_dist.div(seg_lens)
+            new_dev_fracs = dev_dist
 
             ## new string normals
             new_str_norms = seg_norms_lf.add(seg_norms_rt).div(2)
@@ -608,15 +615,43 @@ class String_Finder(nn.Module):
             ## pack new strs datastrct
             new_strs = t.cat([ far_ends_lf, far_ends_rt, new_str_norms, new_dev_fracs[:,None] ], 1)
 
+
+
+
+            ##### apply scores and filter bad / redundant strings
+            str_draw(new_strs, max_size=self.opt.img_size)
+
+
+
+
+
+
+
+
+
             ## TEST ################################
-            oodl_draw.oodl_draw(0, draw_obj=False, strs=new_strs, max_size=self.opt.img_size, dot_locs=t.cat([far_ends_lf,far_ends_rt]))
+            # oodl_draw.oodl_draw(0, strs=new_strs, max_size=self.opt.img_size, dot_locs=t.cat([far_ends_lf,far_ends_rt]))
+            oodl_draw.oodl_draw(0, strs=new_strs, max_size=self.opt.img_size, img=b_edges[0], dot_locs=t.cat([far_ends_lf,far_ends_rt]))
             ################################
 
 
-            #### update tree_table; each new string inherits ancestors from both parents; just elemwise add their rows from tree_table
-            new_str_ids = ( i+strs.size(0) for i in range(new_strs.size(0)) )
-            [ (tree_table.union(new_str_id, str_edge[0].item()), tree_table.union(new_str_id, str_edge[1].item()), tree_table.union(str_edge[0].item(), str_edge[1].item()))
-                    for (new_str_id, str_edge) in zip(new_str_ids, str_edges)]
+            #### update tree_table; each new string inherits ancestors from both parents
+            # new_str_ids = ( i+strs.size(0) for i in range(new_strs.size(0)) )
+            # [ (tree_table.union(new_str_id, str_edge[0].item()), tree_table.union(new_str_id, str_edge[1].item()), tree_table.union(str_edge[0].item(), str_edge[1].item()))
+            #         for (new_str_id, str_edge) in zip(new_str_ids, str_edges)]
+
+            #### update tree_table; all old nodes in the tree get connected
+            old_str_ids = [i for i in range(strs.size(0))]
+            [tree_table.union(item, old_str_ids[ (i + 1) % strs.size(0)]) for i, item in enumerate(old_str_ids)]
+
+            new_str_ids = [i + strs.size(0) for i in range(new_strs.size(0))]
+            # [tree_table.union(item, new_str_ids[ (i + 1) % new_strs.size(0)]) for i, item in enumerate(new_str_ids)]
+            #
+            # tree_table.union(new_str_ids[0], old_str_ids[0])
+
+            ## add new str_ids into uf as disconnected elems
+            [tree_table.add(new_id) for new_id in new_str_ids]
+            
 
             ## cat old strs and new strs
             strs = t.cat([strs, new_strs])
@@ -626,7 +661,6 @@ class String_Finder(nn.Module):
 
 
 
-        ## TODO: after tree is built, generate similarity scores and filter out bad strings
 
 
         return None

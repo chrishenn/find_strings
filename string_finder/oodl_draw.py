@@ -95,10 +95,10 @@ def oodl_draw(visimg_id, pts=None, imgid=None, img=None, edges=None, as_vecs=Non
             draw_o_vectors(ax, pts_im, vecs_im, linewidths, magnify)
         if strs is not None:
             strs = strs.cpu()
-            strs.mul_(magnify)
+            strs[:, :4].add_(0.5).mul_(magnify)
             draw_strs(ax, strs, linewidths, magnify)
         if dot_locs is not None:
-            dot_locs = dot_locs.mul(magnify)
+            dot_locs.add_(0.5).mul_(magnify)
             dot_locs = dot_locs.cpu()
             draw_dots(ax, dot_locs, magnify)
 
