@@ -437,27 +437,6 @@ class String_Finder(nn.Module):
         dev = batch.device
         t.cuda.set_device(dev)
 
-        ## TEST ################################
-        # batch_size = t.tensor(batch.size(0), device=batch.device)
-        # depth = 6
-        #
-        # locs = t.tensor([1, 3, 5, 7], dtype=t.long, device=0)
-        # locs = t.cartesian_prod(locs, locs).float()
-        # tree_table = t.zeros([locs.size(0) // 2, locs.size(0) // 2 * depth], dtype=t.uint8, device=locs.device)
-        # tree_table[0,1], tree_table[4,1] = 1,1
-        #
-        # pair_ids = t.arange(locs.size(0) // 2, device=locs.device).repeat(2)
-        # imgid = t.zeros_like(locs[:, 0]).long()
-        # edges = t.ops.fbt_op.fbt_kern(locs, imgid, t.tensor(4+0.2).cuda(), t.tensor(1.0).cuda(), pair_ids, tree_table, batch_size)[0]
-        # oodl_draw.oodl_draw(0, locs, imgid, draw_obj=True, as_vecs=edges, max_size=12)
-        #
-        # ##
-        #
-        # [te for te in locs]
-        # [te for te in tree_table]
-        # [(te.item(), te1) for (te, te1) in zip(pair_ids, locs)]
-        ################################
-
 
         ###### Initial Detection and building primitives
         #### detect canny-edges, connect them, select norms from canny sites
@@ -494,30 +473,22 @@ class String_Finder(nn.Module):
 
 
 
+
         ###### MERGING TREE
 
         ### PSEUDOCODE #############
         ## original strings become root nodes in search tree. These unmerged strings represent the choice to 'not merge', and thus should remain in the tree for subsequent scoring.
 
-        ## for enough steps to reach an arbitrary tree depth:
-            ## for each neighboring (qualified) pair of strings, generate a possible combined string.
-            ## "Similarity Score": compute the similarity score for strings that could possibly merge; store in tree-node for possible new string
-
-            ## a string cannot merge with any parent.
-            ## strings that share a parent cannot merge.
-
-            ## increase the search size for neighboring strings proportional to their size
-
-        ## "Underlying Data Scores": generate scores for each node on the tree
-
-        ## extract best-scored strings from pruned tree.
+        ## for enough steps to reach some desired tree depth:
+            ## for each neighboring pair of strings, generate a possible combined string.
+            ## "Score": compute the score for strings that could possibly merge
+                ## merging score is some arbitrary combination of similarity of curvature and representation of underlying data
         ### ################
+
 
         depth = 2
 
-        ## each row gives a str's inheritance. A '1' in a row gives a parent, whose id is the column-id in which the '1' appears
-        # tree_table = t.zeros([strs.size(0), strs.size(0) * 6], dtype=t.uint8, device='cpu')
-
+        ##
         tree_table = UnionFind()
         [tree_table.add(i) for i in range(strs.size(0))]
 
@@ -563,10 +534,6 @@ class String_Finder(nn.Module):
             far_ends_rt = strs[strids_rt].gather(1, other_endpt_cols_lf)
 
             ## TEST ################################
-            ## filter distance = 0
-            # not_coincident = F.pairwise_distance(far_ends_lf, far_ends_rt).gt(1e-3)
-            # other_ends_lf, other_ends_rt = other_ends_lf[not_coincident], other_ends_rt[not_coincident]
-
             ## ends_lf and ends_rt are neighboring string-ends that are  close together
             # neb_locs = t.cat([close_ends_lf, close_ends_rt])
             # pair_ids = t.arange(neb_locs.size(0)//2, device=locs_rt.device)[:,None].repeat(1,2)
@@ -589,7 +556,7 @@ class String_Finder(nn.Module):
             close_ends_lf, close_ends_rt = close_ends_lf[not_coinc], close_ends_rt[not_coinc]
             far_ends_lf, far_ends_rt = far_ends_lf[not_coinc], far_ends_rt[not_coinc]
 
-            ## filter pair_ids; needed for inheritance
+            ## filter pair_ids
             strids_lf, strids_rt = strids_lf[not_coinc], strids_rt[not_coinc]
             str_edges = str_edges[not_coinc]
 
@@ -619,7 +586,37 @@ class String_Finder(nn.Module):
 
 
             ##### apply scores and filter bad / redundant strings
-            str_draw(new_strs, max_size=self.opt.img_size)
+
+
+            ## make smooth splines
+            x_proj_dist = vecs.matmul(t.tensor([[0.], [1.]]).to(dev))
+            interp_x = t.linspace(0, 1, 20).to(dev)[None].mul(x_proj_dist)[..., None].add(locs_lf[:, None])[..., 1]
+
+            dev_locs, locs_lf, locs_rt = dev_locs.cpu().numpy(), locs_lf.cpu().numpy(), locs_rt.cpu().numpy()
+            interp_x = interp_x.cpu().numpy()
+            written = 0
+            for i in range(dev_locs.shape[0]):
+
+                x = t.tensor([dev_locs[i, 1], locs_lf[i, 1], locs_rt[i, 1]])
+                y = t.tensor([dev_locs[i, 0], locs_lf[i, 0], locs_rt[i, 0]])
+
+                x, sortids = x.sort()
+                y = y[sortids]
+
+                x, uids = x.unique_consecutive(return_inverse=True)
+                uids = uids.unique()
+                y = y[uids]
+
+                if x.size(0) < 3: continue
+                written += 1
+
+                # spl = sinterp.make_interp_spline(x, y, k=3, bc_type='natural')
+                # spl = sinterp.make_interp_spline(x, y, k=3, bc_type='clamped')
+                spl = sinterp.make_interp_spline(x, y, k=2)
+                interp_y = spl(interp_x[i])
+
+                ax.plot(interp_x[i], interp_y)
+
 
 
 
@@ -630,8 +627,23 @@ class String_Finder(nn.Module):
 
 
             ## TEST ################################
+
+            #### artificial norms at right-angles to vecs lf->rt
+            locs_lf, locs_rt = new_strs[:, :2], new_strs[:, 2:4]
+            vecs = locs_rt.sub(locs_lf)
+
+            seg_norms = vecs.div(vecs.norm(dim=1, keepdim=True))
+            seg_norms = t.cat([seg_norms, t.zeros_like(seg_norms[:, 0, None])], 1)
+            unit_z = t.tensor([[0., 0., 1.]]).repeat(seg_norms.size(0), 1).to(dev)
+            seg_norms = t.cross(seg_norms, unit_z)[:, :-1]
+
+            new_strs[:, 4:6] = seg_norms
+
+            str_draw(new_strs, max_size=self.opt.img_size)
+            # str_draw(new_strs, img=b_edges[0], max_size=self.opt.img_size)
+
             # oodl_draw.oodl_draw(0, strs=new_strs, max_size=self.opt.img_size, dot_locs=t.cat([far_ends_lf,far_ends_rt]))
-            oodl_draw.oodl_draw(0, strs=new_strs, max_size=self.opt.img_size, img=b_edges[0], dot_locs=t.cat([far_ends_lf,far_ends_rt]))
+            # oodl_draw.oodl_draw(0, strs=new_strs, max_size=self.opt.img_size, img=b_edges[0], dot_locs=t.cat([far_ends_lf,far_ends_rt]))
             ################################
 
 
@@ -651,7 +663,6 @@ class String_Finder(nn.Module):
 
             ## add new str_ids into uf as disconnected elems
             [tree_table.add(new_id) for new_id in new_str_ids]
-            
 
             ## cat old strs and new strs
             strs = t.cat([strs, new_strs])

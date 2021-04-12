@@ -43,16 +43,15 @@ def oodl_draw(visimg_id, pts=None, imgid=None, img=None, edges=None, as_vecs=Non
     ax.set_aspect('equal')
     ax.set_ylim(ymax, 0)
     ax.set_xlim(0, xmax)
-
     plt.axis('off')
-    topil = transforms.ToPILImage()
 
     if img is not None:
+        topil = transforms.ToPILImage()
+
         if img.min() < -1e-4:
             img = img.add(1).div(2)
         img = topil(img.cpu())
         img = img.resize([xmax, ymax], resample=0)
-        # img.putalpha(alpha)
         plt.imshow(img)
 
     if draw_obj or (edges is not None) or (as_vecs is not None) or (groupids is not None) or (strs is not None) or (dot_locs is not None):
