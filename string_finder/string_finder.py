@@ -582,61 +582,70 @@ class String_Finder(nn.Module):
             new_strs = t.cat([ far_ends_lf, far_ends_rt, new_str_norms, new_dev_fracs[:,None] ], 1)
 
 
-            ##### apply scores and filter bad / redundant strings
+            ##### apply scores
 
             ## artificial norms at right-angles to vecs lf->rt
             locs_lf, locs_rt = new_strs[:, :2], new_strs[:, 2:4]
             vecs = locs_rt.sub(locs_lf)
 
-            str_norms = vecs.div( vecs.norm(dim=1, keepdim=True) )
-            str_norms = t.cat([str_norms, t.zeros_like(str_norms[:, 0, None])], 1)
-            unit_z = t.tensor([[0., 0., 1.]]).repeat(str_norms.size(0), 1).to(dev)
-            str_norms = t.cross(str_norms, unit_z)[:, :-1]
+            new_norms = vecs.div( vecs.norm(dim=1, keepdim=True) )
+            new_norms = t.cat([new_norms, t.zeros_like(new_norms[:, 0, None])], 1)
+            unit_z = t.tensor([[0., 0., 1.]]).repeat(new_norms.size(0), 1).to(dev)
+            new_norms = t.cross(new_norms, unit_z)[:, :-1]
 
-            new_strs[:, 4:6] = str_norms
+            ## reflect these artificial norms to match the general direction of the organic ones
+            old_norms = new_strs[:, 4:6].clone()
+            norm_diff = old_norms - new_norms
+            new_norms = t.where(norm_diff.norm(dim=1, keepdim=True).lt(np.sqrt(2)), new_norms, -new_norms)
+
+            new_strs[:, 4:6] = new_norms
 
 
 
             ###### TEST ####################
-            # mag = 25
-            # ax_max = self.opt.img_size * mag
-            # h_size = 0.01 * mag * 36
-            #
-            # fig, ax = plt.subplots(dpi=150)
-            # ax.set_aspect('equal')
-            # ax.set_ylim(ax_max, 0)
-            # ax.set_xlim(0, ax_max)
-            # plt.axis('off')
-            #
-            # locs_lf, locs_rt = locs_lf.cpu().numpy() * mag, locs_rt.cpu().numpy() * mag
-            # seg_center = (locs_lf + locs_rt) / 2
-            # str_norms = str_norms.cpu().numpy() * mag
-            # dev_locs = dev_locs.cpu().numpy() * mag
-            #
-            # palette = t.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1, 1], dtype=t.long)
-            # colors = t.arange(str_norms.shape[0])[:,None].mul(30).float().mul(palette).fmod(255).div(255)
-            # colors = colors.numpy()
-            # colors[:, 3] = 1
-            #
-            # ax.quiver(seg_center[:, 1], seg_center[:, 0], str_norms[:, 1], str_norms[:, 0], angles='xy', units='xy',
-            #           scale=1, width=0.01 * mag,
-            #           headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
-            #
-            # locs_lf = np.stack([locs_lf[:, 1], locs_lf[:, 0]], axis=1)
-            # locs_rt = np.stack([locs_rt[:, 1], locs_rt[:, 0]], axis=1)
-            # lc = mc.LineCollection(list(zip(locs_lf, locs_rt)), linewidths=.01 * mag, color=colors)
-            # ax.add_collection(lc)
-            #
-            # ax.scatter(seg_center[:, 1], seg_center[:, 0], s=mag, alpha=1, marker="x", color=colors)
-            # ax.scatter(dev_locs[:, 1], dev_locs[:, 0], s=mag, alpha=1, marker="x", color=colors)
-            #
-            # ax.scatter(locs_lf[:, 0], locs_lf[:, 1], s=mag, alpha=1, marker=".", color=colors)
-            # ax.scatter(locs_rt[:, 0], locs_rt[:, 1], s=mag, alpha=1, marker=".", color=colors)
-            #
-            # plt.show(block=False)
+            mag = 25
+            ax_max = self.opt.img_size * mag
+            h_size = 0.01 * mag * 36
+
+            fig, ax = plt.subplots(dpi=150)
+            ax.set_aspect('equal')
+            ax.set_ylim(ax_max, 0)
+            ax.set_xlim(0, ax_max)
+            plt.axis('off')
+
+            locs_lf_tmp, locs_rt_tmp = locs_lf.clone().cpu().numpy(), locs_rt.clone().cpu().numpy()
+            seg_center = (((locs_lf_tmp + locs_rt_tmp) / 2) + 0.5) * mag
+            old_norms = old_norms.clone().cpu().numpy() * mag
+            new_norms = new_norms.clone().cpu().numpy() * mag
+            dev_locs_tmp = dev_locs.clone().add(0.5).cpu().numpy() * mag
+
+            palette = t.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1, 1], dtype=t.long)
+            colors = t.arange(new_norms.shape[0])[:,None].mul(30).float().mul(palette).fmod(255).div(255)
+            colors = colors.numpy()
+            colors[:, 3] = 1
+
+            ax.quiver(seg_center[:, 1], seg_center[:, 0], old_norms[:, 1], old_norms[:, 0], angles='xy', units='xy',
+                      scale=1, width=0.01 * mag,
+                      headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
+
+            ax.quiver(seg_center[:, 1], seg_center[:, 0], new_norms[:, 1], new_norms[:, 0], angles='xy', units='xy',
+                      scale=1, width=0.01 * mag,
+                      headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
+
+            locs_lf_tmp, locs_rt_tmp = (locs_lf_tmp + 0.5) * mag, (locs_rt_tmp + 0.5) * mag
+            locs_lf_tmp = np.stack([locs_lf_tmp[:, 1], locs_lf_tmp[:, 0]], axis=1)
+            locs_rt_tmp = np.stack([locs_rt_tmp[:, 1], locs_rt_tmp[:, 0]], axis=1)
+            lc = mc.LineCollection(list(zip(locs_lf_tmp, locs_rt_tmp)), linewidths=.01 * mag, color=colors)
+            ax.add_collection(lc)
+
+            ax.scatter(seg_center[:, 1], seg_center[:, 0], s=mag, alpha=1, marker="x", color=colors)
+            ax.scatter(dev_locs_tmp[:, 1], dev_locs_tmp[:, 0], s=mag, alpha=1, marker="x", color=colors)
+
+            ax.scatter(locs_lf_tmp[:, 0], locs_lf_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
+            ax.scatter(locs_rt_tmp[:, 0], locs_rt_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
+
+            plt.show(block=False)
             ################################
-
-
 
 
 
@@ -655,21 +664,16 @@ class String_Finder(nn.Module):
             splines = t.zeros([batch_size, new_strs.size(0), n_samples, 2], device=dev)
             splines[0,:,:,0] = interp_x
 
-            written = 0
+            jitter = t.rand(3, device=dev).sub(0.5) * (self.opt.img_size * 1e-3)
             for i in range(dev_locs.shape[0]):
 
                 x = locs_x[i]
                 y = locs_y[i]
 
+                x.add_(jitter)
+
                 x, sortids = x.sort()
                 y = y[sortids]
-
-                x, uids = x.unique_consecutive(return_inverse=True)
-                uids = uids.unique()
-                y = y[uids]
-
-                if x.size(0) < 3: continue
-                written += 1
 
                 # spl = sinterp.make_interp_spline(x, y, k=3, bc_type='natural')
                 # spl = sinterp.make_interp_spline(x, y, k=3, bc_type='clamped')
@@ -678,7 +682,6 @@ class String_Finder(nn.Module):
                 interp_y = spl(interp_x_np[i])
 
                 splines[0, i, :, 1] = t.from_numpy( interp_y ).to(dev)
-            assert written > 0
 
 
             ###### TEST ####################
@@ -690,7 +693,7 @@ class String_Finder(nn.Module):
             # ax.set_ylim(ax_max, 0)
             # ax.set_xlim(0, ax_max)
             # plt.axis('off')
-            #
+
             # splines_tmp = splines.clone().add(0.5).mul(mag).cpu().numpy()
             # for i in range(interp_x_np.shape[0]):
             #     ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
@@ -702,19 +705,14 @@ class String_Finder(nn.Module):
             # img = topil(img.cpu())
             # img = img.resize([ax_max, ax_max], resample=0)
             # plt.imshow(img)
-            #
-            # plt.show(block=False)
+
+            plt.show(block=False)
             ################################
 
 
             ## sample values from b_edges using spline locations
-            splines.div_(self.opt.img_size -1).sub_(0.5)
+            splines.div_(self.opt.img_size -1).sub_(0.5).mul_(2)
             sampled = F.grid_sample(b_edges, splines, mode='nearest', align_corners=True)
-
-
-
-
-
 
 
 
