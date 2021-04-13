@@ -45,11 +45,8 @@ def str_draw(strs, img=None, linewidths=0.01, dpi=150, max_size=32):
     ##########
     dev_dists = dev_fracs.div( vecs.norm(dim=1) )
 
-    ## norms
     seg_norms = strs[:, 4:6]
-
     dev_locs = seg_norms.mul(dev_dists[:,None]).add(seg_centers)
-
 
     h_size = linewidths*mag*36
     ax.quiver(locs_lf.cpu().numpy()[:,1], locs_lf.cpu().numpy()[:,0], vecs[:,1].cpu().numpy(), vecs[:,0].cpu().numpy(), angles='xy', units='xy', scale=1, width=linewidths*mag,

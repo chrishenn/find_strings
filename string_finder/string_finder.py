@@ -1,8 +1,8 @@
 import atexit, math, os, time, PIL
 from PIL import Image
+
 import matplotlib.pyplot as plt
-
-
+from matplotlib import collections as mc
 
 import numpy as np
 from numba import njit, prange
@@ -27,11 +27,10 @@ t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_
 
 t.manual_seed(7)
 
-import sparse
-from annoy import AnnoyIndex
+import scipy.interpolate as sinterp
 
-import torch.multiprocessing as mp
-import queue
+# import torch.multiprocessing as mp
+# import queue
 
 
 def mmm(data):
@@ -566,14 +565,14 @@ class String_Finder(nn.Module):
 
 
             #### generate new possible strings
+
             ## deviation_pt describes the location of deviation from straight-line connection between string far-ends
-            deviation_pt = close_ends_lf.add(close_ends_rt).div(2)
+            dev_locs = close_ends_lf.add(close_ends_rt).div(2)
 
             ## new deviation frac of merged string will be the right-angle deviation of deviation_pt to straight-line connection, relative to straight-line seg length
-            test_pts = deviation_pt
-            dev_dist = ( (far_ends_rt[:,1] - far_ends_lf[:,1]) * (far_ends_lf[:,0] - test_pts[:,0]) )  -  ( (far_ends_lf[:,1] - test_pts[:,1]) * (far_ends_rt[:,0] - far_ends_lf[:,0]) )
-            dev_dist.div_(seg_lens)
-            new_dev_fracs = dev_dist
+            test_pts = dev_locs
+            dev_dists = ( (far_ends_rt[:,1] - far_ends_lf[:,1]) * (far_ends_lf[:,0] - test_pts[:,0]) )  -  ( (far_ends_lf[:,1] - test_pts[:,1]) * (far_ends_rt[:,0] - far_ends_lf[:,0]) )
+            new_dev_fracs = dev_dists.div(seg_lens)
 
             ## new string normals
             new_str_norms = seg_norms_lf.add(seg_norms_rt).div(2)
@@ -583,22 +582,84 @@ class String_Finder(nn.Module):
             new_strs = t.cat([ far_ends_lf, far_ends_rt, new_str_norms, new_dev_fracs[:,None] ], 1)
 
 
-
-
             ##### apply scores and filter bad / redundant strings
+
+            ## artificial norms at right-angles to vecs lf->rt
+            locs_lf, locs_rt = new_strs[:, :2], new_strs[:, 2:4]
+            vecs = locs_rt.sub(locs_lf)
+
+            str_norms = vecs.div( vecs.norm(dim=1, keepdim=True) )
+            str_norms = t.cat([str_norms, t.zeros_like(str_norms[:, 0, None])], 1)
+            unit_z = t.tensor([[0., 0., 1.]]).repeat(str_norms.size(0), 1).to(dev)
+            str_norms = t.cross(str_norms, unit_z)[:, :-1]
+
+            new_strs[:, 4:6] = str_norms
+
+
+
+            ###### TEST ####################
+            # mag = 25
+            # ax_max = self.opt.img_size * mag
+            # h_size = 0.01 * mag * 36
+            #
+            # fig, ax = plt.subplots(dpi=150)
+            # ax.set_aspect('equal')
+            # ax.set_ylim(ax_max, 0)
+            # ax.set_xlim(0, ax_max)
+            # plt.axis('off')
+            #
+            # locs_lf, locs_rt = locs_lf.cpu().numpy() * mag, locs_rt.cpu().numpy() * mag
+            # seg_center = (locs_lf + locs_rt) / 2
+            # str_norms = str_norms.cpu().numpy() * mag
+            # dev_locs = dev_locs.cpu().numpy() * mag
+            #
+            # palette = t.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1, 1], dtype=t.long)
+            # colors = t.arange(str_norms.shape[0])[:,None].mul(30).float().mul(palette).fmod(255).div(255)
+            # colors = colors.numpy()
+            # colors[:, 3] = 1
+            #
+            # ax.quiver(seg_center[:, 1], seg_center[:, 0], str_norms[:, 1], str_norms[:, 0], angles='xy', units='xy',
+            #           scale=1, width=0.01 * mag,
+            #           headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
+            #
+            # locs_lf = np.stack([locs_lf[:, 1], locs_lf[:, 0]], axis=1)
+            # locs_rt = np.stack([locs_rt[:, 1], locs_rt[:, 0]], axis=1)
+            # lc = mc.LineCollection(list(zip(locs_lf, locs_rt)), linewidths=.01 * mag, color=colors)
+            # ax.add_collection(lc)
+            #
+            # ax.scatter(seg_center[:, 1], seg_center[:, 0], s=mag, alpha=1, marker="x", color=colors)
+            # ax.scatter(dev_locs[:, 1], dev_locs[:, 0], s=mag, alpha=1, marker="x", color=colors)
+            #
+            # ax.scatter(locs_lf[:, 0], locs_lf[:, 1], s=mag, alpha=1, marker=".", color=colors)
+            # ax.scatter(locs_rt[:, 0], locs_rt[:, 1], s=mag, alpha=1, marker=".", color=colors)
+            #
+            # plt.show(block=False)
+            ################################
+
+
+
 
 
             ## make smooth splines
-            x_proj_dist = vecs.matmul(t.tensor([[0.], [1.]]).to(dev))
-            interp_x = t.linspace(0, 1, 20).to(dev)[None].mul(x_proj_dist)[..., None].add(locs_lf[:, None])[..., 1]
+            n_samples = 10
 
-            dev_locs, locs_lf, locs_rt = dev_locs.cpu().numpy(), locs_lf.cpu().numpy(), locs_rt.cpu().numpy()
-            interp_x = interp_x.cpu().numpy()
+            x_proj_dist = vecs.matmul(t.tensor([[0.], [1.]]).to(dev))
+            interp_x = t.linspace(0, 1, n_samples, device=dev)[None].mul(x_proj_dist)[..., None].add(locs_lf[:, None])[..., 1]
+
+            locs_x = t.stack([ locs_lf[:,1], dev_locs[:,1], locs_rt[:,1] ], 1)
+            locs_y = t.stack([ locs_lf[:,0], dev_locs[:,0], locs_rt[:,0] ], 1)
+
+            interp_x_np = interp_x.cpu().numpy()
+
+            # splines = [batch, string, samples, x, y]
+            splines = t.zeros([batch_size, new_strs.size(0), n_samples, 2], device=dev)
+            splines[0,:,:,0] = interp_x
+
             written = 0
             for i in range(dev_locs.shape[0]):
 
-                x = t.tensor([dev_locs[i, 1], locs_lf[i, 1], locs_rt[i, 1]])
-                y = t.tensor([dev_locs[i, 0], locs_lf[i, 0], locs_rt[i, 0]])
+                x = locs_x[i]
+                y = locs_y[i]
 
                 x, sortids = x.sort()
                 y = y[sortids]
@@ -612,12 +673,43 @@ class String_Finder(nn.Module):
 
                 # spl = sinterp.make_interp_spline(x, y, k=3, bc_type='natural')
                 # spl = sinterp.make_interp_spline(x, y, k=3, bc_type='clamped')
-                spl = sinterp.make_interp_spline(x, y, k=2)
-                interp_y = spl(interp_x[i])
+                spl = sinterp.make_interp_spline(x.cpu().numpy(), y.cpu().numpy(), k=2)
 
-                ax.plot(interp_x[i], interp_y)
+                interp_y = spl(interp_x_np[i])
+
+                splines[0, i, :, 1] = t.from_numpy( interp_y ).to(dev)
+            assert written > 0
 
 
+            ###### TEST ####################
+            # mag = 25
+            # ax_max = self.opt.img_size * mag
+            #
+            # fig, ax = plt.subplots(dpi=150)
+            # ax.set_aspect('equal')
+            # ax.set_ylim(ax_max, 0)
+            # ax.set_xlim(0, ax_max)
+            # plt.axis('off')
+            #
+            # splines_tmp = splines.clone().add(0.5).mul(mag).cpu().numpy()
+            # for i in range(interp_x_np.shape[0]):
+            #     ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
+            #
+            # img = b_edges[0]
+            # topil = transforms.ToPILImage()
+            # if img.min() < -1e-4:
+            #     img = img.add(1).div(2)
+            # img = topil(img.cpu())
+            # img = img.resize([ax_max, ax_max], resample=0)
+            # plt.imshow(img)
+            #
+            # plt.show(block=False)
+            ################################
+
+
+            ## sample values from b_edges using spline locations
+            splines.div_(self.opt.img_size -1).sub_(0.5)
+            sampled = F.grid_sample(b_edges, splines, mode='nearest', align_corners=True)
 
 
 
@@ -627,39 +719,19 @@ class String_Finder(nn.Module):
 
 
             ## TEST ################################
+            str_draw(new_strs, img=b_edges[0], max_size=self.opt.img_size)
 
-            #### artificial norms at right-angles to vecs lf->rt
-            locs_lf, locs_rt = new_strs[:, :2], new_strs[:, 2:4]
-            vecs = locs_rt.sub(locs_lf)
-
-            seg_norms = vecs.div(vecs.norm(dim=1, keepdim=True))
-            seg_norms = t.cat([seg_norms, t.zeros_like(seg_norms[:, 0, None])], 1)
-            unit_z = t.tensor([[0., 0., 1.]]).repeat(seg_norms.size(0), 1).to(dev)
-            seg_norms = t.cross(seg_norms, unit_z)[:, :-1]
-
-            new_strs[:, 4:6] = seg_norms
+            new_strs = new_strs[sampled[0, 0].sum(dim=1).gt(0.01)]
 
             str_draw(new_strs, max_size=self.opt.img_size)
-            # str_draw(new_strs, img=b_edges[0], max_size=self.opt.img_size)
-
-            # oodl_draw.oodl_draw(0, strs=new_strs, max_size=self.opt.img_size, dot_locs=t.cat([far_ends_lf,far_ends_rt]))
-            # oodl_draw.oodl_draw(0, strs=new_strs, max_size=self.opt.img_size, img=b_edges[0], dot_locs=t.cat([far_ends_lf,far_ends_rt]))
-            ################################
-
-
-            #### update tree_table; each new string inherits ancestors from both parents
-            # new_str_ids = ( i+strs.size(0) for i in range(new_strs.size(0)) )
-            # [ (tree_table.union(new_str_id, str_edge[0].item()), tree_table.union(new_str_id, str_edge[1].item()), tree_table.union(str_edge[0].item(), str_edge[1].item()))
-            #         for (new_str_id, str_edge) in zip(new_str_ids, str_edges)]
+            str_draw(new_strs, img=b_edges[0], max_size=self.opt.img_size)
+            ########################################
 
             #### update tree_table; all old nodes in the tree get connected
             old_str_ids = [i for i in range(strs.size(0))]
             [tree_table.union(item, old_str_ids[ (i + 1) % strs.size(0)]) for i, item in enumerate(old_str_ids)]
 
             new_str_ids = [i + strs.size(0) for i in range(new_strs.size(0))]
-            # [tree_table.union(item, new_str_ids[ (i + 1) % new_strs.size(0)]) for i, item in enumerate(new_str_ids)]
-            #
-            # tree_table.union(new_str_ids[0], old_str_ids[0])
 
             ## add new str_ids into uf as disconnected elems
             [tree_table.add(new_id) for new_id in new_str_ids]
@@ -668,11 +740,6 @@ class String_Finder(nn.Module):
             strs = t.cat([strs, new_strs])
 
             print("no")
-
-
-
-
-
 
         return None
 
