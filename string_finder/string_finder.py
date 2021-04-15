@@ -638,18 +638,20 @@ class String_Finder(nn.Module):
             lc = mc.LineCollection(list(zip(locs_lf_tmp, locs_rt_tmp)), linewidths=.01 * mag, color=colors)
             ax.add_collection(lc)
 
-            ax.scatter(seg_center[:, 1], seg_center[:, 0], s=mag, alpha=1, marker="x", color=colors)
+            # ax.scatter(seg_center[:, 1], seg_center[:, 0], s=mag, alpha=1, marker="x", color=colors)
             ax.scatter(dev_locs_tmp[:, 1], dev_locs_tmp[:, 0], s=mag, alpha=1, marker="x", color=colors)
 
             ax.scatter(locs_lf_tmp[:, 0], locs_lf_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
             ax.scatter(locs_rt_tmp[:, 0], locs_rt_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
 
-            plt.show(block=False)
+            # plt.show(block=False)
             ################################
 
 
 
             ## make smooth splines
+            # TODO: transform locs into coords referenced by string normals.
+
             n_samples = 10
 
             x_proj_dist = vecs.matmul(t.tensor([[0.], [1.]]).to(dev))
@@ -664,13 +666,13 @@ class String_Finder(nn.Module):
             splines = t.zeros([batch_size, new_strs.size(0), n_samples, 2], device=dev)
             splines[0,:,:,0] = interp_x
 
-            jitter = t.rand(3, device=dev).sub(0.5) * (self.opt.img_size * 1e-3)
+            jitter = t.rand(3, device=dev).sub(0.5) * (1e-1)
             for i in range(dev_locs.shape[0]):
 
                 x = locs_x[i]
                 y = locs_y[i]
 
-                x.add_(jitter)
+                x = x.add(jitter)
 
                 x, sortids = x.sort()
                 y = y[sortids]
@@ -683,8 +685,11 @@ class String_Finder(nn.Module):
 
                 splines[0, i, :, 1] = t.from_numpy( interp_y ).to(dev)
 
+            # TODO: un-transform splines from normal-ref'd coords into image-ref'd coords
 
             ###### TEST ####################
+
+
             # mag = 25
             # ax_max = self.opt.img_size * mag
             #
@@ -694,36 +699,54 @@ class String_Finder(nn.Module):
             # ax.set_xlim(0, ax_max)
             # plt.axis('off')
 
-            # splines_tmp = splines.clone().add(0.5).mul(mag).cpu().numpy()
-            # for i in range(interp_x_np.shape[0]):
-            #     ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
-            #
-            # img = b_edges[0]
-            # topil = transforms.ToPILImage()
-            # if img.min() < -1e-4:
-            #     img = img.add(1).div(2)
-            # img = topil(img.cpu())
-            # img = img.resize([ax_max, ax_max], resample=0)
-            # plt.imshow(img)
+            splines_tmp = splines.clone().add(0.5).mul(mag).cpu().numpy()
+            for i in range(splines_tmp.shape[1]):
+                ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
+
+            img = b_edges[0].clone()
+            topil = transforms.ToPILImage()
+            if img.min() < -1e-4:
+                img = img.add(1).div(2)
+            img = topil(img.cpu())
+            img = img.resize([ax_max, ax_max], resample=0)
+            plt.imshow(img)
 
             plt.show(block=False)
             ################################
 
 
             ## sample values from b_edges using spline locations
-            splines.div_(self.opt.img_size -1).sub_(0.5).mul_(2)
-            sampled = F.grid_sample(b_edges, splines, mode='nearest', align_corners=True)
+            sample_splines = splines.clone().div(self.opt.img_size -1).sub(0.5).mul(2)
+            sampled = F.grid_sample(b_edges, sample_splines, mode='nearest', align_corners=True)
 
+            ## filter out splines and strings that do not represent the edges found
+            good_splines = sampled.sum(dim=-1).gt( n_samples * 0.9 )[0]
+            splines = splines[None, good_splines]
+            new_strs = new_strs[good_splines[0]]
 
 
             ## TEST ################################
-            str_draw(new_strs, img=b_edges[0], max_size=self.opt.img_size)
+            fig, ax = plt.subplots(dpi=150)
+            ax.set_aspect('equal')
+            ax.set_ylim(ax_max, 0)
+            ax.set_xlim(0, ax_max)
+            plt.axis('off')
 
-            new_strs = new_strs[sampled[0, 0].sum(dim=1).gt(0.01)]
+            splines_tmp = splines.clone().add(0.5).mul(mag).cpu().numpy()
+            for i in range(splines_tmp.shape[1]):
+                ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
 
-            str_draw(new_strs, max_size=self.opt.img_size)
-            str_draw(new_strs, img=b_edges[0], max_size=self.opt.img_size)
+            img = b_edges[0].clone()
+            topil = transforms.ToPILImage()
+            if img.min() < -1e-4:
+                img = img.add(1).div(2)
+            img = topil(img.cpu())
+            img = img.resize([ax_max, ax_max], resample=0)
+            plt.imshow(img)
+
+            plt.show(block=False)
             ########################################
+
 
             #### update tree_table; all old nodes in the tree get connected
             old_str_ids = [i for i in range(strs.size(0))]
