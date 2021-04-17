@@ -465,6 +465,11 @@ class String_Finder(nn.Module):
         strs = t.cat([ locs_lf, locs_rt, norms, t.zeros_like(edges[:,0,None]) ], 1)
 
 
+        ##############################
+        # temp = t.cat([locs_lf, locs_rt])
+        # imgid_tmp = t.zeros_like(temp[:,0])
+        # oodl_draw.oodl_draw(0, pts=locs, imgid=imgid, as_vecs=edges)
+
 
         ###### MERGING TREE
         ## for enough steps to reach some desired tree depth:
@@ -477,7 +482,6 @@ class String_Finder(nn.Module):
         [tree_table.add(i) for i in range(strs.size(0))]
 
         rads = [1, 2]
-
 
         ## TODO: support batching
         for i in range(len(rads)):
@@ -530,7 +534,7 @@ class String_Finder(nn.Module):
             close_ends_lf, close_ends_rt = close_ends_lf[not_coinc], close_ends_rt[not_coinc]
             far_ends_lf, far_ends_rt = far_ends_lf[not_coinc], far_ends_rt[not_coinc]
 
-            ## filter pair_ids
+            ## filter str_ids
             strids_lf, strids_rt = strids_lf[not_coinc], strids_rt[not_coinc]
 
             ## filtered string normals
@@ -627,22 +631,21 @@ class String_Finder(nn.Module):
 
             #### make smooth splines
 
-            ## transform locs into coords referenced by string normals.
+            ## transform each string's locs into coords aligned with their own string normals.
             norms = new_strs[:, 4:6]
-            norms = t.cat([norms, t.zeros_like(norms[:,0])[:,None]], 1)
+            norms = t.cat([norms, t.zeros_like(norms[:,0,None])], 1)
 
             img_y = t.tensor([1.,0.,0.], device=dev)
-            tran_cross = t.cross(norms, img_y[None].repeat(norms.size(0), 1))
-            tran_s = tran_cross.norm(dim=1)
-            tran_dot = norms.matmul(img_y)
+            tran_cross = t.cross(img_y[None].repeat(norms.size(0),1), norms, dim=1)
+            tran_s = tran_cross[:,-1]
+            tran_c = norms.matmul(img_y)
 
-            rot_mat = t.stack([t.stack([tran_dot, -tran_s], 1), t.stack([tran_s, tran_dot], 1)], 2)
+            rot_mat = t.stack([t.stack([tran_c, -tran_s], 1), t.stack([tran_s, tran_c], 1)], 2)
 
             locs_lf = t.bmm(rot_mat, locs_lf[...,None]).squeeze()
             locs_rt = t.bmm(rot_mat, locs_rt[...,None]).squeeze()
             dev_locs = t.bmm(rot_mat, dev_locs[...,None]).squeeze()
             # vecs = t.bmm(rot_mat, vecs[...,None]).squeeze()
-
 
 
             ###### TEST ####################
@@ -659,9 +662,14 @@ class String_Finder(nn.Module):
             colors = colors.numpy()
             colors[:, 3] = 1
 
-            # ax.quiver(seg_center[:, 1], seg_center[:, 0], new_norms[:, 1], new_norms[:, 0], angles='xy', units='xy',
-            #           scale=1, width=0.01 * mag,
-            #           headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
+            seg_centers = locs_lf.add(locs_rt).div(2)
+            seg_centers = seg_centers.cpu().numpy() * mag
+
+            norms = t.bmm(rot_mat, norms[:,:2, None]).squeeze()
+            norms = norms.cpu().numpy() * mag
+
+            ax.quiver(seg_centers[:, 1], -seg_centers[:, 0], norms[:, 1], -norms[:, 0], angles='xy', units='xy',
+                      scale=1, width=0.01 * mag, headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
 
             locs_lf_tmp, locs_rt_tmp = locs_lf.clone().cpu().numpy() * mag, locs_rt.clone().cpu().numpy() * mag
 
