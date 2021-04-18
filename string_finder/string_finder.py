@@ -584,7 +584,6 @@ class String_Finder(nn.Module):
 
             ###### TEST ####################
             # mag = 25
-            # ax_max = self.opt.img_size * mag
             # h_size = 0.01 * mag * 36
             #
             # fig, ax = plt.subplots(dpi=150)
@@ -645,74 +644,70 @@ class String_Finder(nn.Module):
             locs_lf = t.bmm(rot_mat, locs_lf[...,None]).squeeze()
             locs_rt = t.bmm(rot_mat, locs_rt[...,None]).squeeze()
             dev_locs = t.bmm(rot_mat, dev_locs[...,None]).squeeze()
-            # vecs = t.bmm(rot_mat, vecs[...,None]).squeeze()
 
+
+            ## TODO: fix overlapping strings with opposing norms and dev_locs
 
             ###### TEST ####################
-            mag = 25
-            ax_max = self.opt.img_size * mag
-            h_size = 0.01 * mag * 36
-
-            fig, ax = plt.subplots(dpi=150)
-            ax.set_aspect('equal')
-            plt.axis('off')
-
-            palette = t.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1, 1], dtype=t.long)
-            colors = t.arange(new_norms.shape[0])[:,None].mul(20).float().mul(palette).fmod(255).div(255)
-            colors = colors.numpy()
-            colors[:, 3] = 1
-
-            seg_centers = locs_lf.add(locs_rt).div(2)
-            seg_centers = seg_centers.cpu().numpy() * mag
-
-            norms = t.bmm(rot_mat, norms[:,:2, None]).squeeze()
-            norms = norms.cpu().numpy() * mag
-
-            ax.quiver(seg_centers[:, 1], -seg_centers[:, 0], norms[:, 1], -norms[:, 0], angles='xy', units='xy',
-                      scale=1, width=0.01 * mag, headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
-
-            locs_lf_tmp, locs_rt_tmp = locs_lf.clone().cpu().numpy() * mag, locs_rt.clone().cpu().numpy() * mag
-
-            dev_locs_tmp = dev_locs.clone().cpu().numpy() * mag
-
-            locs_lf_tmp = np.stack([locs_lf_tmp[:, 1], -locs_lf_tmp[:, 0]], axis=1)
-            locs_rt_tmp = np.stack([locs_rt_tmp[:, 1], -locs_rt_tmp[:, 0]], axis=1)
-            dev_locs_tmp = np.stack([dev_locs_tmp[:, 1], -dev_locs_tmp[:, 0]], axis=1)
-
-            lc = mc.LineCollection(list(zip(locs_lf_tmp, locs_rt_tmp)), linewidths=.01 * mag, color=colors)
-            ax.add_collection(lc)
-
-            ax.scatter(dev_locs_tmp[:, 0], dev_locs_tmp[:, 1], s=mag, alpha=1, marker="x", color=colors)
-            ax.scatter(locs_lf_tmp[:, 0], locs_lf_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
-            ax.scatter(locs_rt_tmp[:, 0], locs_rt_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
-
-            plt.show(block=False)
+            # mag = 25
+            # ax_max = self.opt.img_size * mag
+            # h_size = 0.01 * mag * 36
+            #
+            # fig, ax = plt.subplots(dpi=150)
+            # ax.set_aspect('equal')
+            # plt.axis('off')
+            #
+            # palette = t.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1, 1], dtype=t.long)
+            # colors = t.arange(new_norms.shape[0])[:,None].mul(20).float().mul(palette).fmod(255).div(255)
+            # colors = colors.numpy()
+            # colors[:, 3] = 1
+            #
+            # seg_centers = locs_lf.add(locs_rt).div(2)
+            # seg_centers = seg_centers.cpu().numpy() * mag
+            #
+            # norms = t.bmm(rot_mat, norms[:,:2, None]).squeeze()
+            # norms = norms.cpu().numpy() * mag
+            #
+            # ax.quiver(seg_centers[:, 1], -seg_centers[:, 0], norms[:, 1], -norms[:, 0], angles='xy', units='xy',
+            #           scale=1, width=0.01 * mag, headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
+            #
+            # locs_lf_tmp, locs_rt_tmp = locs_lf.clone().cpu().numpy() * mag, locs_rt.clone().cpu().numpy() * mag
+            #
+            # dev_locs_tmp = dev_locs.clone().cpu().numpy() * mag
+            #
+            # locs_lf_tmp = np.stack([locs_lf_tmp[:, 1], -locs_lf_tmp[:, 0]], axis=1)
+            # locs_rt_tmp = np.stack([locs_rt_tmp[:, 1], -locs_rt_tmp[:, 0]], axis=1)
+            # dev_locs_tmp = np.stack([dev_locs_tmp[:, 1], -dev_locs_tmp[:, 0]], axis=1)
+            #
+            # lc = mc.LineCollection(list(zip(locs_lf_tmp, locs_rt_tmp)), linewidths=.01 * mag, color=colors)
+            # ax.add_collection(lc)
+            #
+            # ax.scatter(dev_locs_tmp[:, 0], dev_locs_tmp[:, 1], s=mag, alpha=1, marker="x", color=colors)
+            # ax.scatter(locs_lf_tmp[:, 0], locs_lf_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
+            # ax.scatter(locs_rt_tmp[:, 0], locs_rt_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
+            #
+            # plt.show(block=False)
             ################################
 
-            ## TODO: at this point there are overlapping strings with opposing norms and dev_locs. Fix
-            ## TODO: this rotation is garbage. some strings are rotated correctly and some end up at 45 degrees.
 
 
             ## interpolate splines
             n_samples = 10
 
-            interp_x = t.linspace(0, 1, n_samples)
+            interp_x = t.linspace(0, 1, n_samples, device=dev).mul( locs_rt.sub(locs_lf).norm(dim=1,keepdim=True) ).add( locs_lf[:,1,None] )
             interp_x_np = interp_x.cpu().numpy()
 
             locs_x = t.stack([ locs_lf[:,1], dev_locs[:,1], locs_rt[:,1] ], 1)
             locs_y = t.stack([ locs_lf[:,0], dev_locs[:,0], locs_rt[:,0] ], 1)
 
-            # splines = [batch, string, samples, x, y]
+            ## splines = [batch, string, samples, x, y]
             splines = t.zeros([batch_size, new_strs.size(0), n_samples, 2], device=dev)
             splines[0,:,:,0] = interp_x
 
-            jitter = t.rand(3, device=dev).sub(0.5) * (1e-2)
             for i in range(dev_locs.shape[0]):
 
                 x = locs_x[i]
                 y = locs_y[i]
-
-                x = x.add(jitter)
 
                 x, sortids = x.sort()
                 y = y[sortids]
@@ -721,33 +716,59 @@ class String_Finder(nn.Module):
                 # spl = sinterp.make_interp_spline(x, y, k=3, bc_type='clamped')
                 spl = sinterp.make_interp_spline(x.cpu().numpy(), y.cpu().numpy(), k=2)
 
-                interp_y = spl(interp_x_np)
+                interp_y = spl(interp_x_np[i])
 
                 splines[0, i, :, 1] = t.from_numpy( interp_y ).to(dev)
+
+
 
             # TODO: un-transform splines from normal-ref'd coords into image-ref'd coords
 
             ###### TEST ####################
             mag = 25
-            ax_max = self.opt.img_size * mag
-
+            h_size = 0.01 * mag * 36
             fig, ax = plt.subplots(dpi=150)
             ax.set_aspect('equal')
-            ax.set_ylim(-ax_max, ax_max)
-            ax.set_xlim(-ax_max, ax_max)
             plt.axis('off')
 
-            splines_tmp = splines.clone().add(0.5).mul(mag).cpu().numpy()
-            for i in range(splines_tmp.shape[1]):
-                ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
+            palette = t.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1, 1], dtype=t.long)
+            colors = t.arange(new_norms.shape[0])[:,None].mul(30).float().mul(palette).fmod(255).div(255)
+            colors = colors.numpy()
+            colors[:, 3] = 1
 
-            img = b_edges[0].clone()
-            topil = transforms.ToPILImage()
-            if img.min() < -1e-4:
-                img = img.add(1).div(2)
-            img = topil(img.cpu())
-            img = img.resize([ax_max, ax_max], resample=0)
-            plt.imshow(img)
+            splines_tmp = splines.clone().cpu().numpy() * mag
+            for i in range(splines_tmp.shape[1]):
+                ax.plot(-splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
+
+            # img = b_edges[0].clone()
+            # topil = transforms.ToPILImage()
+            # if img.min() < -1e-4:
+            #     img = img.add(1).div(2)
+            # img = topil(img.cpu())
+            # img = img.resize([ax_max, ax_max], resample=0)
+            # plt.imshow(img)
+
+            norms = t.bmm(rot_mat, norms[:,:2, None]).squeeze()
+            norms = norms.cpu().numpy() * mag
+
+            seg_centers = locs_lf.add(locs_rt).div(2)
+            seg_centers = seg_centers.cpu().numpy() * mag
+
+            ax.quiver(seg_centers[:, 1], -seg_centers[:, 0], norms[:, 1], -norms[:, 0], angles='xy', units='xy',
+                      scale=1, width=0.01 * mag, headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
+
+            locs_lf_tmp, locs_rt_tmp = locs_lf.clone().cpu().numpy() * mag, locs_rt.clone().cpu().numpy() * mag
+            # dev_locs_tmp = dev_locs.clone().cpu().numpy() * mag
+
+            locs_lf_tmp = np.stack([locs_lf_tmp[:, 1], -locs_lf_tmp[:, 0]], axis=1)
+            locs_rt_tmp = np.stack([locs_rt_tmp[:, 1], -locs_rt_tmp[:, 0]], axis=1)
+            lc = mc.LineCollection(list(zip(locs_lf_tmp, locs_rt_tmp)), linewidths=.01 * mag, color=colors)
+            ax.add_collection(lc)
+
+            # ax.scatter(dev_locs_tmp[:, 0], -dev_locs_tmp[:, 1], s=mag, alpha=1, marker="x", color=colors)
+            ax.scatter(locs_lf_tmp[:, 0], locs_lf_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
+            ax.scatter(locs_rt_tmp[:, 0], locs_rt_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
+
 
             plt.show(block=False)
             ################################
@@ -763,27 +784,10 @@ class String_Finder(nn.Module):
             new_strs = new_strs[good_splines[0]]
 
 
-            ## TEST ################################
-            fig, ax = plt.subplots(dpi=150)
-            ax.set_aspect('equal')
-            ax.set_ylim(ax_max, 0)
-            ax.set_xlim(0, ax_max)
-            plt.axis('off')
 
-            splines_tmp = splines.clone().add(0.5).mul(mag).cpu().numpy()
-            for i in range(splines_tmp.shape[1]):
-                ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
 
-            img = b_edges[0].clone()
-            topil = transforms.ToPILImage()
-            if img.min() < -1e-4:
-                img = img.add(1).div(2)
-            img = topil(img.cpu())
-            img = img.resize([ax_max, ax_max], resample=0)
-            plt.imshow(img)
 
-            plt.show(block=False)
-            ########################################
+
 
 
             #### update tree_table; all old nodes in the tree get connected
