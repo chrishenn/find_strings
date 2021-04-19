@@ -744,11 +744,13 @@ class String_Finder(nn.Module):
             colors = colors.numpy()
             colors[:, 3] = 1
 
+            locs_x = np.add(locs_x, least_x.cpu().numpy())
+            locs_y = np.add(locs_y, least_y.cpu().numpy())
             locs_x, locs_y = locs_x * mag, locs_y * mag
             splines_tmp = splines.clone().cpu().numpy() * mag
             for i in range(splines_tmp.shape[1]):
                 ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
-                # ax.plot(locs_x[i], locs_y[i])
+                ax.plot(locs_x[i], locs_y[i])
 
             # img = b_edges[0].clone()
             # topil = transforms.ToPILImage()
