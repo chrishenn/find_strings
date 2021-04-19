@@ -700,17 +700,18 @@ class String_Finder(nn.Module):
             locs_x = t.stack([ locs_lf[:,1], dev_locs[:,1], locs_rt[:,1] ], 1)
             locs_y = t.stack([ locs_lf[:,0], dev_locs[:,0], locs_rt[:,0] ], 1)
 
+            locs_x, sortids = locs_x.sort(dim=1)
+            locs_y = locs_y.gather(1, sortids)
+
             ## splines = [batch, string, samples, x, y]
             splines = t.zeros([batch_size, new_strs.size(0), n_samples, 2], device=dev)
             splines[0,:,:,0] = interp_x
+
 
             for i in range(dev_locs.shape[0]):
 
                 x = locs_x[i]
                 y = locs_y[i]
-
-                x, sortids = x.sort()
-                y = y[sortids]
 
                 # spl = sinterp.make_interp_spline(x, y, k=3, bc_type='natural')
                 # spl = sinterp.make_interp_spline(x, y, k=3, bc_type='clamped')
@@ -719,6 +720,7 @@ class String_Finder(nn.Module):
                 interp_y = spl(interp_x_np[i])
 
                 splines[0, i, :, 1] = t.from_numpy( interp_y ).to(dev)
+
 
 
 
@@ -736,9 +738,11 @@ class String_Finder(nn.Module):
             colors = colors.numpy()
             colors[:, 3] = 1
 
+            locs_x, locs_y = locs_x.cpu().numpy(), locs_y.cpu().numpy()
             splines_tmp = splines.clone().cpu().numpy() * mag
             for i in range(splines_tmp.shape[1]):
-                ax.plot(-splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
+                # ax.plot(-splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
+                ax.plot(locs_x[i], locs_y[i])
 
             # img = b_edges[0].clone()
             # topil = transforms.ToPILImage()
@@ -748,26 +752,26 @@ class String_Finder(nn.Module):
             # img = img.resize([ax_max, ax_max], resample=0)
             # plt.imshow(img)
 
-            norms = t.bmm(rot_mat, norms[:,:2, None]).squeeze()
-            norms = norms.cpu().numpy() * mag
+            # norms = t.bmm(rot_mat, norms[:,:2, None]).squeeze()
+            # norms = norms.cpu().numpy() * mag
+            #
+            # seg_centers = locs_lf.add(locs_rt).div(2)
+            # seg_centers = seg_centers.cpu().numpy() * mag
+            #
+            # ax.quiver(seg_centers[:, 1], -seg_centers[:, 0], norms[:, 1], -norms[:, 0], angles='xy', units='xy',
+            #           scale=1, width=0.01 * mag, headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
 
-            seg_centers = locs_lf.add(locs_rt).div(2)
-            seg_centers = seg_centers.cpu().numpy() * mag
-
-            ax.quiver(seg_centers[:, 1], -seg_centers[:, 0], norms[:, 1], -norms[:, 0], angles='xy', units='xy',
-                      scale=1, width=0.01 * mag, headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
-
-            locs_lf_tmp, locs_rt_tmp = locs_lf.clone().cpu().numpy() * mag, locs_rt.clone().cpu().numpy() * mag
+            # locs_lf_tmp, locs_rt_tmp = locs_lf.clone().cpu().numpy() * mag, locs_rt.clone().cpu().numpy() * mag
             # dev_locs_tmp = dev_locs.clone().cpu().numpy() * mag
 
-            locs_lf_tmp = np.stack([locs_lf_tmp[:, 1], -locs_lf_tmp[:, 0]], axis=1)
-            locs_rt_tmp = np.stack([locs_rt_tmp[:, 1], -locs_rt_tmp[:, 0]], axis=1)
-            lc = mc.LineCollection(list(zip(locs_lf_tmp, locs_rt_tmp)), linewidths=.01 * mag, color=colors)
-            ax.add_collection(lc)
+            # locs_lf_tmp = np.stack([locs_lf_tmp[:, 1], -locs_lf_tmp[:, 0]], axis=1)
+            # locs_rt_tmp = np.stack([locs_rt_tmp[:, 1], -locs_rt_tmp[:, 0]], axis=1)
+            # lc = mc.LineCollection(list(zip(locs_lf_tmp, locs_rt_tmp)), linewidths=.01 * mag, color=colors)
+            # ax.add_collection(lc)
 
             # ax.scatter(dev_locs_tmp[:, 0], -dev_locs_tmp[:, 1], s=mag, alpha=1, marker="x", color=colors)
-            ax.scatter(locs_lf_tmp[:, 0], locs_lf_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
-            ax.scatter(locs_rt_tmp[:, 0], locs_rt_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
+            # ax.scatter(locs_lf_tmp[:, 0], locs_lf_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
+            # ax.scatter(locs_rt_tmp[:, 0], locs_rt_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
 
 
             plt.show(block=False)
