@@ -694,7 +694,8 @@ class String_Finder(nn.Module):
             ## interpolate splines
             n_samples = 10
 
-            interp_x = t.linspace(0, 1, n_samples, device=dev).mul( locs_rt.sub(locs_lf).norm(dim=1,keepdim=True) ).add( locs_lf[:,1,None] )
+            # interp_x = t.linspace(0, 1, n_samples, device=dev).mul( locs_rt.sub(locs_lf).norm(dim=1,keepdim=True) ).add( locs_lf[:,1,None] )
+            interp_x = t.linspace(0, 1, n_samples, device=dev).mul( locs_rt.sub(locs_lf).norm(dim=1,keepdim=True) )
             interp_x_np = interp_x.cpu().numpy()
 
             locs_x = t.stack([ locs_lf[:,1], dev_locs[:,1], locs_rt[:,1] ], 1)
@@ -703,26 +704,31 @@ class String_Finder(nn.Module):
             locs_x, sortids = locs_x.sort(dim=1)
             locs_y = locs_y.gather(1, sortids)
 
+            least_x = locs_x[:, 0, None].clone()
+            locs_x.sub_( least_x )
+
+            least_y = locs_y[:,0,None].clone()
+            locs_y.sub_( least_y )
+
             ## splines = [batch, string, samples, x, y]
             splines = t.zeros([batch_size, new_strs.size(0), n_samples, 2], device=dev)
             splines[0,:,:,0] = interp_x
 
-
+            locs_x, locs_y = locs_x.cpu().numpy(), locs_y.cpu().numpy()
             for i in range(dev_locs.shape[0]):
 
-                x = locs_x[i]
-                y = locs_y[i]
+                x, y = locs_x[i], locs_y[i]
 
                 # spl = sinterp.make_interp_spline(x, y, k=3, bc_type='natural')
                 # spl = sinterp.make_interp_spline(x, y, k=3, bc_type='clamped')
-                spl = sinterp.make_interp_spline(x.cpu().numpy(), y.cpu().numpy(), k=2)
+                spl = sinterp.make_interp_spline(x, y, k=2)
 
                 interp_y = spl(interp_x_np[i])
 
                 splines[0, i, :, 1] = t.from_numpy( interp_y ).to(dev)
 
-
-
+            splines[0, :, :, 0].add_(least_x)
+            splines[0, :, :, 1].add_(least_y)
 
             # TODO: un-transform splines from normal-ref'd coords into image-ref'd coords
 
@@ -738,11 +744,11 @@ class String_Finder(nn.Module):
             colors = colors.numpy()
             colors[:, 3] = 1
 
-            locs_x, locs_y = locs_x.cpu().numpy(), locs_y.cpu().numpy()
+            locs_x, locs_y = locs_x * mag, locs_y * mag
             splines_tmp = splines.clone().cpu().numpy() * mag
             for i in range(splines_tmp.shape[1]):
-                # ax.plot(-splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
-                ax.plot(locs_x[i], locs_y[i])
+                ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
+                # ax.plot(locs_x[i], locs_y[i])
 
             # img = b_edges[0].clone()
             # topil = transforms.ToPILImage()
