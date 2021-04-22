@@ -495,8 +495,7 @@ class String_Finder(nn.Module):
 
             str_edges = t.where(end_edges.ge(strs.size(0)), end_edges.sub(strs.size(0)), end_edges)
 
-
-            # filter ends that are part of the same string
+            ## filter ends that are part of the same string
             same_str = str_edges[:,0].eq( str_edges[:,1] )
 
             ## filter ends that define a string that share an ancestor, or inherit from each other
@@ -504,10 +503,6 @@ class String_Finder(nn.Module):
 
             end_edges = end_edges[ (same_str | related.cuda()).logical_not() ]
             str_edges = str_edges[ (same_str | related.cuda()).logical_not() ]
-
-
-
-
 
 
             ###### generate new strings from valid end_edges
@@ -527,10 +522,9 @@ class String_Finder(nn.Module):
             seg_lens = F.pairwise_distance(far_ends_lf, far_ends_rt)
             not_coinc = seg_lens.gt(0.1)
 
-
-
             ## filter distances and endpoints
             seg_lens = seg_lens[not_coinc]
+            str_edges = str_edges[not_coinc]
             close_ends_lf, close_ends_rt = close_ends_lf[not_coinc], close_ends_rt[not_coinc]
             far_ends_lf, far_ends_rt = far_ends_lf[not_coinc], far_ends_rt[not_coinc]
 
@@ -540,6 +534,7 @@ class String_Finder(nn.Module):
             ## filtered string normals
             norm_cols = t.tensor([[4, 5]], device=dev).repeat(strids_lf.size(0), 1)
             seg_norms_lf, seg_norms_rt = strs[strids_lf].gather(1, norm_cols), strs[strids_rt].gather(1, norm_cols)
+
 
 
             #### generate new possible strings
@@ -575,11 +570,9 @@ class String_Finder(nn.Module):
 
             new_strs[:, 4:6] = new_norms
 
-
             ## make artificial dev_locs along string norm using dev_frac
             seg_centers = locs_lf.add(locs_rt).div(2)
             dev_locs = seg_centers + new_norms * seg_lens.mul(new_strs[:,-1])[:,None]
-
 
 
             ###### TEST ####################
@@ -641,12 +634,11 @@ class String_Finder(nn.Module):
 
             rot_mat = t.stack([t.stack([tran_c, -tran_s], 1), t.stack([tran_s, tran_c], 1)], 2)
 
-            locs_lf = t.bmm(rot_mat, locs_lf[...,None]).squeeze()
-            locs_rt = t.bmm(rot_mat, locs_rt[...,None]).squeeze()
-            dev_locs = t.bmm(rot_mat, dev_locs[...,None]).squeeze()
+            locs_lf = rot_mat.bmm(locs_lf[...,None]).squeeze()
+            locs_rt = rot_mat.bmm(locs_rt[...,None]).squeeze()
+            dev_locs = rot_mat.bmm(dev_locs[...,None]).squeeze()
 
 
-            ## TODO: fix overlapping strings with opposing norms and dev_locs
 
             ###### TEST ####################
             # mag = 25
@@ -690,11 +682,9 @@ class String_Finder(nn.Module):
             ################################
 
 
-
             ## interpolate splines
             n_samples = 10
 
-            # interp_x = t.linspace(0, 1, n_samples, device=dev).mul( locs_rt.sub(locs_lf).norm(dim=1,keepdim=True) ).add( locs_lf[:,1,None] )
             interp_x = t.linspace(0, 1, n_samples, device=dev).mul( locs_rt.sub(locs_lf).norm(dim=1,keepdim=True) )
             interp_x_np = interp_x.cpu().numpy()
 
@@ -730,75 +720,77 @@ class String_Finder(nn.Module):
             splines[0, :, :, 0].add_(least_x)
             splines[0, :, :, 1].add_(least_y)
 
-            # TODO: un-transform splines from normal-ref'd coords into image-ref'd coords
+            ## de-rotate splines
+            splines = splines.squeeze().bmm(rot_mat.transpose(1,2))[None]
+
+            ## sample values from b_edges using spline locations
+            # sample_splines = splines.clone().div(self.opt.img_size -1).sub(0.5).mul(2)
+            # rep_scores = F.grid_sample(b_edges, sample_splines, mode='nearest', align_corners=True)
+
 
             ###### TEST ####################
             mag = 25
-            h_size = 0.01 * mag * 36
             fig, ax = plt.subplots(dpi=150)
             ax.set_aspect('equal')
             plt.axis('off')
 
-            palette = t.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1, 1], dtype=t.long)
-            colors = t.arange(new_norms.shape[0])[:,None].mul(30).float().mul(palette).fmod(255).div(255)
-            colors = colors.numpy()
-            colors[:, 3] = 1
-
-            locs_x = np.add(locs_x, least_x.cpu().numpy())
-            locs_y = np.add(locs_y, least_y.cpu().numpy())
-            locs_x, locs_y = locs_x * mag, locs_y * mag
-            splines_tmp = splines.clone().cpu().numpy() * mag
+            splines_tmp = (splines.clone().cpu().numpy() + 0.5) * mag
             for i in range(splines_tmp.shape[1]):
                 ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
-                ax.plot(locs_x[i], locs_y[i])
 
-            # img = b_edges[0].clone()
-            # topil = transforms.ToPILImage()
-            # if img.min() < -1e-4:
-            #     img = img.add(1).div(2)
-            # img = topil(img.cpu())
-            # img = img.resize([ax_max, ax_max], resample=0)
-            # plt.imshow(img)
-
-            # norms = t.bmm(rot_mat, norms[:,:2, None]).squeeze()
-            # norms = norms.cpu().numpy() * mag
-            #
-            # seg_centers = locs_lf.add(locs_rt).div(2)
-            # seg_centers = seg_centers.cpu().numpy() * mag
-            #
-            # ax.quiver(seg_centers[:, 1], -seg_centers[:, 0], norms[:, 1], -norms[:, 0], angles='xy', units='xy',
-            #           scale=1, width=0.01 * mag, headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
-
-            # locs_lf_tmp, locs_rt_tmp = locs_lf.clone().cpu().numpy() * mag, locs_rt.clone().cpu().numpy() * mag
-            # dev_locs_tmp = dev_locs.clone().cpu().numpy() * mag
-
-            # locs_lf_tmp = np.stack([locs_lf_tmp[:, 1], -locs_lf_tmp[:, 0]], axis=1)
-            # locs_rt_tmp = np.stack([locs_rt_tmp[:, 1], -locs_rt_tmp[:, 0]], axis=1)
-            # lc = mc.LineCollection(list(zip(locs_lf_tmp, locs_rt_tmp)), linewidths=.01 * mag, color=colors)
-            # ax.add_collection(lc)
-
-            # ax.scatter(dev_locs_tmp[:, 0], -dev_locs_tmp[:, 1], s=mag, alpha=1, marker="x", color=colors)
-            # ax.scatter(locs_lf_tmp[:, 0], locs_lf_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
-            # ax.scatter(locs_rt_tmp[:, 0], locs_rt_tmp[:, 1], s=mag, alpha=1, marker=".", color=colors)
-
+            ax_max = self.opt.img_size * mag
+            img = b_edges[0].clone()
+            topil = transforms.ToPILImage()
+            if img.min() < -1e-4:
+                img = img.add(1).div(2)
+            img = topil(img.cpu())
+            img = img.resize([ax_max, ax_max], resample=0)
+            plt.imshow(img)
 
             plt.show(block=False)
-            ################################
-
-
-            ## sample values from b_edges using spline locations
-            sample_splines = splines.clone().div(self.opt.img_size -1).sub(0.5).mul(2)
-            sampled = F.grid_sample(b_edges, sample_splines, mode='nearest', align_corners=True)
-
-            ## filter out splines and strings that do not represent the edges found
-            good_splines = sampled.sum(dim=-1).gt( n_samples * 0.9 )[0]
-            splines = splines[None, good_splines]
-            new_strs = new_strs[good_splines[0]]
+            ####################
 
 
 
+            #### score_2: similarity scores
+            ## str_edges indexes into strs, two strs for each row of new_strs
+            dev_lf, dev_rt = strs[str_edges[:,0], -1], strs[str_edges[:,1], -1]
+            len_lf, len_rt = t.pairwise_distance( strs[str_edges[:,0]][:,[0,1]], strs[str_edges[:,0]][:,[2,3]] ), t.pairwise_distance( strs[str_edges[:,1]][:,[0,1]], strs[str_edges[:,1]][:,[2,3]] )
+            norm_lf, norm_rt = strs[str_edges[:,0]][:,[4,5]], strs[str_edges[:,1]][:,[4,5]]
+
+            dev_rat = dev_lf / (dev_rt + 1e-3)
+            len_rat = len_lf / (len_rt + 1e-3)
+            norm_dist = t.pairwise_distance( norm_lf, norm_rt )
+
+            sim_scores = dev_rat + len_rat + norm_dist
 
 
+            ## take best new strings
+            new_strs = new_strs[None, sim_scores.gt(1)]
+            splines = splines[0, sim_scores.gt(1)][None]
+
+
+            ###### TEST: score_2 ####################
+            mag = 25
+            fig, ax = plt.subplots(dpi=150)
+            ax.set_aspect('equal')
+            plt.axis('off')
+
+            splines_tmp = (splines.clone().cpu().numpy() + 0.5) * mag
+            for i in range(splines_tmp.shape[1]):
+                ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
+
+            ax_max = self.opt.img_size * mag
+            img = b_edges[0].clone()
+            topil = transforms.ToPILImage()
+            if img.min() < -1e-4:
+                img = img.add(1).div(2)
+            img = topil(img.cpu())
+            img = img.resize([ax_max, ax_max], resample=0)
+            plt.imshow(img)
+
+            plt.show(block=False)
+            ####################
 
 
 
