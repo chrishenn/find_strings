@@ -496,13 +496,13 @@ class String_Finder(nn.Module):
             str_edges = t.where(end_edges.ge(strs.size(0)), end_edges.sub(strs.size(0)), end_edges)
 
             ## filter ends that are part of the same string
-            same_str = str_edges[:,0].eq( str_edges[:,1] )
-
-            ## filter ends that define a string that share an ancestor, or inherit from each other
-            related = t.tensor( [tree_table.connected(str_edge[0].item(), str_edge[1].item()) for str_edge in str_edges] )
-
-            end_edges = end_edges[ (same_str | related.cuda()).logical_not() ]
-            str_edges = str_edges[ (same_str | related.cuda()).logical_not() ]
+            # same_str = str_edges[:,0].eq( str_edges[:,1] )
+            #
+            # ## filter ends that define a string that share an ancestor, or inherit from each other
+            # related = t.tensor( [tree_table.connected(str_edge[0].item(), str_edge[1].item()) for str_edge in str_edges] )
+            #
+            # end_edges = end_edges[ (same_str | related.cuda()).logical_not() ]
+            # str_edges = str_edges[ (same_str | related.cuda()).logical_not() ]
 
 
             ###### generate new strings from valid end_edges
@@ -729,25 +729,25 @@ class String_Finder(nn.Module):
 
 
             ###### TEST ####################
-            mag = 25
-            fig, ax = plt.subplots(dpi=150)
-            ax.set_aspect('equal')
-            plt.axis('off')
-
-            splines_tmp = (splines.clone().cpu().numpy() + 0.5) * mag
-            for i in range(splines_tmp.shape[1]):
-                ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
-
-            ax_max = self.opt.img_size * mag
-            img = b_edges[0].clone()
-            topil = transforms.ToPILImage()
-            if img.min() < -1e-4:
-                img = img.add(1).div(2)
-            img = topil(img.cpu())
-            img = img.resize([ax_max, ax_max], resample=0)
-            plt.imshow(img)
-
-            plt.show(block=False)
+            # mag = 25
+            # fig, ax = plt.subplots(dpi=150)
+            # ax.set_aspect('equal')
+            # plt.axis('off')
+            #
+            # splines_tmp = (splines.clone().cpu().numpy() + 0.5) * mag
+            # for i in range(splines_tmp.shape[1]):
+            #     ax.plot(splines_tmp[0,i,:,0], splines_tmp[0,i,:,1])
+            #
+            # ax_max = self.opt.img_size * mag
+            # img = b_edges[0].clone()
+            # topil = transforms.ToPILImage()
+            # if img.min() < -1e-4:
+            #     img = img.add(1).div(2)
+            # img = topil(img.cpu())
+            # img = img.resize([ax_max, ax_max], resample=0)
+            # plt.imshow(img)
+            #
+            # plt.show(block=False)
             ####################
 
 
@@ -795,16 +795,18 @@ class String_Finder(nn.Module):
 
 
             #### update tree_table; all old nodes in the tree get connected
-            old_str_ids = [i for i in range(strs.size(0))]
-            [tree_table.union(item, old_str_ids[ (i + 1) % strs.size(0)]) for i, item in enumerate(old_str_ids)]
+            # old_str_ids = [i for i in range(strs.size(0))]
+            # [tree_table.union(item, old_str_ids[ (i + 1) % strs.size(0)]) for i, item in enumerate(old_str_ids)]
+            #
+            # new_str_ids = [i + strs.size(0) for i in range(new_strs.size(0))]
+            #
+            # ## add new str_ids into uf as disconnected elems
+            # [tree_table.add(new_id) for new_id in new_str_ids]
+            #
+            # ## cat old strs and new strs
+            # # strs = t.cat([strs, new_strs.squeeze()])
 
-            new_str_ids = [i + strs.size(0) for i in range(new_strs.size(0))]
-
-            ## add new str_ids into uf as disconnected elems
-            [tree_table.add(new_id) for new_id in new_str_ids]
-
-            ## cat old strs and new strs
-            strs = t.cat([strs, new_strs])
+            strs = new_strs.squeeze()
 
             print("no")
 
