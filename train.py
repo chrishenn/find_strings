@@ -218,7 +218,8 @@ def train_single(opt):
 
     opt.train_loader = get_loader(opt, True)
 
-    model = string_finder.String_Finder(opt)
+    # model = string_finder.String_Finder(opt)
+    model = string_finder.Pyramid_Strings(opt)
     print(model)
     model = model.to(opt.dev_ids[0])
 

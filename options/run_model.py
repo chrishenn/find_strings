@@ -1,6 +1,3 @@
-# import warnings
-# warnings.filterwarnings("ignore")
-
 import os, sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
@@ -18,7 +15,7 @@ class Options(Options_Super):
         parser.add_argument('--debug',    type=bool, default=True, help='debug ')
 
         # data options
-        parser.add_argument('--base_dataset', type=str, default='hand_drawn_2', help='chooses what datasets are loaded.')
+        parser.add_argument('--base_dataset', type=str, default='hand_drawn_q_arcs', help='chooses what datasets are loaded.')
 
         # parser.add_argument('--base_dataset', type=str, default='cifar', help='chooses what datasets are loaded.')
         # parser.add_argument('--base_dataset', type=str, default='mnist', help='chooses what datasets are loaded.')
@@ -43,7 +40,7 @@ class Options(Options_Super):
         parser.add_argument('--batch_size',   type=int, default=1, help='batch size')
 
         # compute options
-        parser.add_argument('--dev_ids',   type=str,  default='1', help='gpu ids: e.g. 0  0,1,2, 0,2. use cpu or -1 for CPU')
+        parser.add_argument('--dev_ids',   type=str,  default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use cpu or -1 for CPU')
         parser.add_argument('--n_threads', type=int,  default=2, help='data loader cpu threads for each process.')
 
         parser.add_argument('--amp',            type=bool, default=False, help='turn amp on or off')

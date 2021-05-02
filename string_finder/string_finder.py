@@ -19,9 +19,9 @@ from string_finder.oodl_utils import regrid
 from string_finder.str_draw import str_draw
 from unionfind.unionfind import UnionFind
 
-t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_brute/build/libfrnn_ts.so")
-t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_brute/build/libfrnn_ts.so")
-t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_tree_brute/build/libfrnn_ts.so")
+# t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_brute/build/libfrnn_ts.so")
+# t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_brute/build/libfrnn_ts.so")
+# t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_tree_brute/build/libfrnn_ts.so")
 
 # t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/write_row/build/libwrite_row.so")
 
@@ -34,6 +34,7 @@ import scipy.interpolate as sinterp
 
 
 def mmm(data):
+    data = data.clone().float()
     return data.min(),data.max(),data.mean()
 
 
@@ -185,7 +186,7 @@ class Canny(nn.Module):
         images.div_(images.max())
 
         ## upsample
-        if self.scale > 1: images = F.interpolate(images, scale_factor=self.scale, mode='area')
+        # if self.scale > 1: images = F.interpolate(images, scale_factor=self.scale, mode='area')
 
         ## take intensity-gradients
         sobel_x = self.sobel_x(images)
@@ -418,6 +419,195 @@ class OOSampler_Patch(nn.Module):
 #################################################################################################################################################################################
 #################################################################################################################################################################################
 #################################################################################################################################################################################
+
+
+
+
+
+
+
+class Pyramid_Strings(nn.Module):
+    def __init__(self, opt):
+        super().__init__()
+
+        self.opt = opt
+
+        thresh_lo, thresh_hi = 0.5, 0.85
+        self.canny = Canny(opt, thresh_lo, thresh_hi)
+
+        self.py_sizes = [64, 32, 16]
+        self.interp_mode = 'area'
+
+        self.grids = list()
+        for i,size in enumerate(self.py_sizes):
+            D = t.arange(size, dtype=t.int)
+            gridy, gridx = t.meshgrid(D, D)
+            gridy = gridy[None, None, ...].float()
+            gridx = gridx[None, None, ...].float()
+            grid = t.stack([gridy, gridx], -1).add(0.5)
+            self.grids.append(grid)
+
+        self.lin_ids = list()
+        for i, grid in enumerate(self.grids):
+            if i-1 >= 0:
+                prev_max = self.lin_ids[i-1][-1,-1,-1,-1] + 1
+            else: prev_max = 0
+
+            base = grid[..., 0]
+            b_ids = t.arange(base.numel())
+            shape = base.shape
+            b_ids = b_ids.reshape(shape).add(prev_max)
+            self.lin_ids.append(b_ids)
+
+    ## NOTE: only works for batch size == 1
+    def forward(self, batch):
+        '''
+        ## NOTE: only works for batch size == 1
+
+        string format:
+            strs[i] = [ end_lf[y,x], end_rt[y,x], str_norm[dy,dx], dev-frac ]
+            where dev-frac gives a fraction of deviation of the string on that row, relative to its length
+            parent_rowids gives the row of my parent string
+        '''
+
+        dev = batch.device
+        t.cuda.set_device(dev)
+        batch_size = t.tensor(batch.size(0), device=dev)
+
+        for i,grid in enumerate(self.grids): self.grids[i] = grid.cuda()
+        for i,lin_id in enumerate(self.lin_ids): self.lin_ids[i] = lin_id.cuda()
+
+        ## at high res
+        b_edges, sobel = self.canny(batch)
+        b_edges[b_edges.gt(0.01)] = 1
+        b_edges[b_edges.le(0.01)] = 0
+
+        ## to starting res
+        base_size = self.py_sizes[0]
+        b_edges, sobel = F.interpolate(b_edges, size=base_size, mode=self.interp_mode), F.interpolate(sobel, size=base_size, mode=self.interp_mode)
+
+        b_edges[b_edges.gt(0.1)] = 1
+        b_edges[b_edges.le(0.1)] = 0
+
+        ## list of different sizes
+        py_data = list()
+        py_data.append((b_edges.clone(), sobel.clone()))
+        for size in self.py_sizes[1:]:
+            b_edges, sobel = F.interpolate(py_data[0][0], size=size, mode=self.interp_mode), F.interpolate(py_data[0][1], size=size, mode=self.interp_mode)
+
+            b_edges[b_edges.gt(0.01)] = 1
+            b_edges[b_edges.le(0.01)] = 0
+
+            py_data.append((b_edges.clone(), sobel.clone()))
+
+        ###########
+        # for tup in py_data:
+        #     oodl_utils.tensor_imshow(tup[0][0])
+        ###########
+
+        ## build hierarchy
+        p_linids = t.empty(0, dtype=t.long, device=dev)
+        my_linids = t.empty(0, dtype=t.long, device=dev)
+        centers = t.empty([0,2], device=dev)
+        norms = t.empty([0,2], device=dev)
+        sizes = t.empty(0, device=dev)
+
+        for i, (b_edges, sobel) in enumerate(py_data):
+            my_size = b_edges.size(2)
+
+            ## one lower and one higher in pyramid
+            if i+1 < len(py_data):
+                parent_linids = F.interpolate(self.lin_ids[i+1].float(), size=my_size, mode='nearest').long()
+                parent_linids = parent_linids[b_edges.bool()]
+            else:
+                parent_linids = self.lin_ids[i][b_edges.bool()]
+
+            object_linids = self.lin_ids[i][b_edges.bool()]
+            str_sizes = t.ones_like(object_linids)
+
+            ## scale centers to reference into the base image of size base_size
+            transform_rat = base_size / my_size
+            edge_centers = self.grids[i][b_edges.bool()].mul(transform_rat)
+            edge_norms = sobel[0,:,b_edges.squeeze().bool()].T
+
+            str_sizes = str_sizes.mul(transform_rat)
+
+            p_linids = t.cat([p_linids, parent_linids])
+            my_linids = t.cat([my_linids, object_linids])
+            centers = t.cat([centers, edge_centers])
+            norms = t.cat([norms, edge_norms])
+            sizes = t.cat([sizes, str_sizes])
+
+        ## transform linids from pyramid for parents into the rows of those parents
+        rowids = t.arange(my_linids.size(0), device=dev)
+        p_rowids = t.empty(p_linids.max().int().item() + 1, dtype=t.long, device=dev)
+        p_rowids.index_put_((my_linids,), rowids)
+        p_rowids = p_rowids[p_linids]
+
+        norms = norms.div(norms.norm(dim=1,keepdim=True))
+
+
+        ## generate strings from centers and norms
+        z_vec = t.tensor([[0.,0.,1.]], device=dev).repeat(norms.size(0), 1)
+        rt_vecs = t.cross(t.cat([norms, t.zeros_like(norms[:,0,None])], -1), z_vec).mul(sizes[:,None]).div(2)[:,:2]
+
+        locs_lf, locs_rt = centers.add(rt_vecs), centers.sub(rt_vecs)
+
+        ## string format
+        ## strs[i] = [ end_lf[y,x], end_rt[y,x], str_norm[dy,dx], dev-frac ]
+        ## where dev-frac gives a fraction of deviation of the string on that row, relative to its length
+        ## parent_rowids gives the row of my parent string
+        strings = t.cat([ locs_lf, locs_rt, norms, t.zeros_like(norms[:,0,None]) ], 1)
+
+        return strings, p_rowids
+
+        ###### TEST ####################
+        # mag = 25
+        # ax_max = base_size * mag
+        # h_size = 0.01 * mag * 36
+        #
+        # fig, ax = plt.subplots(dpi=150)
+        # ax.set_aspect('equal')
+        # plt.axis('off')
+        #
+        # palette = t.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1, 1], dtype=t.long)
+        # colors = t.arange(p_rowids.size(0))[:,None].mul(20).float().mul(palette).fmod(255).div(255)
+        # colors = colors.numpy()
+        # colors[:, 3] = 1
+        #
+        # seg_centers = centers
+        # seg_centers = seg_centers.cpu().numpy() * mag
+        #
+        # norms = norms.cpu().numpy() * mag
+        #
+        # locs_lf, locs_rt = locs_lf.cpu().numpy() * mag, locs_rt.cpu().numpy() * mag
+        #
+        # ax.quiver(seg_centers[:, 1], seg_centers[:, 0], norms[:, 1], norms[:, 0], angles='xy', units='xy',
+        #           scale=1, width=0.01 * mag, headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
+        #
+        # ax.scatter(seg_centers[:, 1], seg_centers[:, 0], s=mag, alpha=1, marker="x", color=colors)
+        # ax.scatter(locs_lf[:, 1], locs_lf[:, 0], s=mag, alpha=1, marker=".", color=colors)
+        # ax.scatter(locs_rt[:, 1], locs_rt[:, 0], s=mag, alpha=1, marker=".", color=colors)
+        #
+        # topil = transforms.ToPILImage()
+        # img = topil(py_data[0][0][0])
+        # img = img.resize([ax_max, ax_max], resample=0)
+        # plt.imshow(img)
+        #
+        # plt.show(block=False)
+        ################################
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
