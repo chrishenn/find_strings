@@ -582,7 +582,7 @@ class Pyramid_Strings(nn.Module):
 
         ###### TEST ####################
         im = 0
-        str_draw(im, imgid, centers, norms, locs_lf, locs_rt, img=py_data[0][0][im], im_size=base_size)
+        str_draw(im, imgid, centers, norms, locs_lf, locs_rt, p_rowids, img=py_data[0][0][im], im_size=base_size)
 
         return None
         ################################
