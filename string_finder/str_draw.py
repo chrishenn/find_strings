@@ -5,18 +5,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import collections as mc
 
-import scipy.interpolate as sinterp
 
 
+def str_draw(draw_im, imgid, centers, norms, locs_lf, locs_rt, img=None, dpi=150, im_size=32):
 
-def str_draw(strs, img=None, linewidths=0.01, dpi=150, max_size=32):
-    ## DO NOT USE THIS CODE - VIS CODE IS INLINE IN STRING_FINDER.PY
+    im_mask = imgid.eq(draw_im).cpu().numpy()
 
-    ## strs = [locs[y,x] locs[y,x] norms[dy,dx] dev-frac]
-
-    dev = strs.device
     mag = 25
-    ax_max = max_size * mag
+    ax_max = im_size * mag
+    h_size = 0.01 * mag * 36
 
     fig, ax = plt.subplots(dpi=dpi)
     ax.set_aspect('equal')
@@ -24,7 +21,36 @@ def str_draw(strs, img=None, linewidths=0.01, dpi=150, max_size=32):
     ax.set_xlim(0, ax_max)
     plt.axis('off')
 
-    ## NOT IN USE
+    palette = t.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1, 1], dtype=t.long)
+    colors = t.arange(norms.size(0))[:, None].mul(20).float().mul(palette).fmod(255).div(255)
+    colors = colors.numpy()
+    colors[:, 3] = 1
+
+    seg_centers_ = centers.clone().cpu().numpy() * mag
+    norms_ = norms.clone().cpu().numpy() * mag
+    locs_lf_, locs_rt_ = locs_lf.clone().cpu().numpy() * mag, locs_rt.clone().cpu().numpy() * mag
+
+    seg_centers_ = seg_centers_[im_mask]
+    norms_ = norms_[im_mask]
+    locs_lf_, locs_rt_ = locs_lf_[im_mask], locs_rt_[im_mask]
+    colors = colors[im_mask]
+
+    ax.quiver(seg_centers_[:, 1], seg_centers_[:, 0], norms_[:, 1], norms_[:, 0], angles='xy', units='xy',
+              scale=1, width=0.01 * mag, headwidth=h_size, headlength=h_size + 2, headaxislength=h_size + 1, color=colors)
+
+    ax.scatter(seg_centers_[:, 1], seg_centers_[:, 0], s=mag, alpha=1, marker="x", color=colors)
+    ax.scatter(locs_lf_[:, 1], locs_lf_[:, 0], s=mag, alpha=1, marker=".", color=colors)
+    ax.scatter(locs_rt_[:, 1], locs_rt_[:, 0], s=mag, alpha=1, marker=".", color=colors)
+
+    locs_lf_ = np.stack([locs_lf_[:, 1], locs_lf_[:, 0]], axis=1)
+    locs_rt_ = np.stack([locs_rt_[:, 1], locs_rt_[:, 0]], axis=1)
+
+    lc = mc.LineCollection(list(zip(locs_lf_, locs_rt_)), linewidths=.1 * mag, color=colors)
+    ax.add_collection(lc)
+
+    topil = transforms.ToPILImage()
+    img = topil(img)
+    img = img.resize([ax_max, ax_max], resample=0)
+    plt.imshow(img)
 
     plt.show(block=False)
-    print("no")

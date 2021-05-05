@@ -432,7 +432,8 @@ class Pyramid_Strings(nn.Module):
 
         self.opt = opt
 
-        thresh_lo, thresh_hi = 0.5, 0.85
+        # thresh_lo, thresh_hi = 0.5, 0.85
+        thresh_lo, thresh_hi = 0.0, 0.1
         self.canny = Canny(opt, thresh_lo, thresh_hi)
 
         self.py_sizes = [64, 32, 16]
@@ -444,7 +445,7 @@ class Pyramid_Strings(nn.Module):
             gridy, gridx = t.meshgrid(D, D)
             gridy = gridy[None, None, ...].float()
             gridx = gridx[None, None, ...].float()
-            grid = t.stack([gridy, gridx], -1).add(0.5)
+            grid = t.stack([gridy, gridx], -1).add(0.5).repeat(self.opt.batch_size, 1,1,1,1)
             self.grids.append(grid)
 
         self.lin_ids = list()
@@ -457,7 +458,18 @@ class Pyramid_Strings(nn.Module):
             b_ids = t.arange(base.numel())
             shape = base.shape
             b_ids = b_ids.reshape(shape).add(prev_max)
+
             self.lin_ids.append(b_ids)
+
+        self.img_ids = list()
+        for i, grid in enumerate(self.grids):
+            imgid = grid[..., 0].clone()
+
+            for b in range(imgid.size(0)):
+                imgid[b].fill_(b)
+
+            self.img_ids.append( imgid )
+
 
     ## NOTE: only works for batch size == 1
     def forward(self, batch):
@@ -472,38 +484,40 @@ class Pyramid_Strings(nn.Module):
 
         dev = batch.device
         t.cuda.set_device(dev)
-        batch_size = t.tensor(batch.size(0), device=dev)
 
         for i,grid in enumerate(self.grids): self.grids[i] = grid.cuda()
         for i,lin_id in enumerate(self.lin_ids): self.lin_ids[i] = lin_id.cuda()
+        for i,img_id in enumerate(self.img_ids): self.img_ids[i] = img_id.cuda()
 
         ## at high res
         b_edges, sobel = self.canny(batch)
-        b_edges[b_edges.gt(0.01)] = 1
-        b_edges[b_edges.le(0.01)] = 0
+        b_edges[b_edges.gt(1e-6)] = 1
+
+        # oodl_utils.tensor_imshow(b_edges[0])
 
         ## to starting res
         base_size = self.py_sizes[0]
         b_edges, sobel = F.interpolate(b_edges, size=base_size, mode=self.interp_mode), F.interpolate(sobel, size=base_size, mode=self.interp_mode)
+        b_edges[b_edges.gt(1e-6)] = 1
 
-        b_edges[b_edges.gt(0.1)] = 1
-        b_edges[b_edges.le(0.1)] = 0
+        # oodl_utils.tensor_imshow(b_edges[0])
+        # oodl_utils.tensor_imshow(b_edges[1])
+        # oodl_utils.tensor_imshow(b_edges[2])
+        # oodl_utils.tensor_imshow(b_edges[3])
 
         ## list of different sizes
         py_data = list()
         py_data.append((b_edges.clone(), sobel.clone()))
         for size in self.py_sizes[1:]:
             b_edges, sobel = F.interpolate(py_data[0][0], size=size, mode=self.interp_mode), F.interpolate(py_data[0][1], size=size, mode=self.interp_mode)
+            b_edges[b_edges.gt(1e-6)] = 1
 
-            b_edges[b_edges.gt(0.01)] = 1
-            b_edges[b_edges.le(0.01)] = 0
+            # oodl_utils.tensor_imshow(b_edges[0])
+            # oodl_utils.tensor_imshow(b_edges[1])
+            # oodl_utils.tensor_imshow(b_edges[2])
+            # oodl_utils.tensor_imshow(b_edges[3])
 
             py_data.append((b_edges.clone(), sobel.clone()))
-
-        ###########
-        # for tup in py_data:
-        #     oodl_utils.tensor_imshow(tup[0][0])
-        ###########
 
         ## build hierarchy
         p_linids = t.empty(0, dtype=t.long, device=dev)
@@ -511,32 +525,37 @@ class Pyramid_Strings(nn.Module):
         centers = t.empty([0,2], device=dev)
         norms = t.empty([0,2], device=dev)
         sizes = t.empty(0, device=dev)
+        imgid = t.empty(0, device=dev)
 
         for i, (b_edges, sobel) in enumerate(py_data):
             my_size = b_edges.size(2)
+            b_edges_b = b_edges.bool()
 
             ## one lower and one higher in pyramid
             if i+1 < len(py_data):
-                parent_linids = F.interpolate(self.lin_ids[i+1].float(), size=my_size, mode='nearest').long()
-                parent_linids = parent_linids[b_edges.bool()]
+                parent_linids = F.interpolate(self.lin_ids[i + 1].float(), size=my_size, mode='nearest').long()
+                parent_linids = parent_linids[b_edges_b]
             else:
-                parent_linids = self.lin_ids[i][b_edges.bool()]
+                parent_linids = self.lin_ids[i][b_edges_b]
 
-            object_linids = self.lin_ids[i][b_edges.bool()]
+            object_linids = self.lin_ids[i][b_edges_b]
             str_sizes = t.ones_like(object_linids)
 
             ## scale centers to reference into the base image of size base_size
             transform_rat = base_size / my_size
-            edge_centers = self.grids[i][b_edges.bool()].mul(transform_rat)
-            edge_norms = sobel[0,:,b_edges.squeeze().bool()].T
+            edge_centers = self.grids[i][b_edges_b].mul(transform_rat)
+            edge_norms = sobel.permute(0,2,3,1)[b_edges_b.squeeze()]
 
             str_sizes = str_sizes.mul(transform_rat)
+
+            im_id = self.img_ids[i][b_edges_b]
 
             p_linids = t.cat([p_linids, parent_linids])
             my_linids = t.cat([my_linids, object_linids])
             centers = t.cat([centers, edge_centers])
             norms = t.cat([norms, edge_norms])
             sizes = t.cat([sizes, str_sizes])
+            imgid = t.cat([imgid, im_id])
 
         ## transform linids from pyramid for parents into the rows of those parents
         rowids = t.arange(my_linids.size(0), device=dev)
@@ -557,45 +576,18 @@ class Pyramid_Strings(nn.Module):
         ## strs[i] = [ end_lf[y,x], end_rt[y,x], str_norm[dy,dx], dev-frac ]
         ## where dev-frac gives a fraction of deviation of the string on that row, relative to its length
         ## parent_rowids gives the row of my parent string
-        strings = t.cat([ locs_lf, locs_rt, norms, t.zeros_like(norms[:,0,None]) ], 1)
+        # strings = t.cat([ locs_lf, locs_rt, norms, t.zeros_like(norms[:,0,None]) ], 1)
 
-        return strings, p_rowids
+        # return strings, p_rowids
 
         ###### TEST ####################
-        # mag = 25
-        # ax_max = base_size * mag
-        # h_size = 0.01 * mag * 36
-        #
-        # fig, ax = plt.subplots(dpi=150)
-        # ax.set_aspect('equal')
-        # plt.axis('off')
-        #
-        # palette = t.tensor([2 ** 25 - 1, 2 ** 15 - 1, 2 ** 21 - 1, 1], dtype=t.long)
-        # colors = t.arange(p_rowids.size(0))[:,None].mul(20).float().mul(palette).fmod(255).div(255)
-        # colors = colors.numpy()
-        # colors[:, 3] = 1
-        #
-        # seg_centers = centers
-        # seg_centers = seg_centers.cpu().numpy() * mag
-        #
-        # norms = norms.cpu().numpy() * mag
-        #
-        # locs_lf, locs_rt = locs_lf.cpu().numpy() * mag, locs_rt.cpu().numpy() * mag
-        #
-        # ax.quiver(seg_centers[:, 1], seg_centers[:, 0], norms[:, 1], norms[:, 0], angles='xy', units='xy',
-        #           scale=1, width=0.01 * mag, headwidth=h_size, headlength=h_size+2, headaxislength=h_size+1, color=colors)
-        #
-        # ax.scatter(seg_centers[:, 1], seg_centers[:, 0], s=mag, alpha=1, marker="x", color=colors)
-        # ax.scatter(locs_lf[:, 1], locs_lf[:, 0], s=mag, alpha=1, marker=".", color=colors)
-        # ax.scatter(locs_rt[:, 1], locs_rt[:, 0], s=mag, alpha=1, marker=".", color=colors)
-        #
-        # topil = transforms.ToPILImage()
-        # img = topil(py_data[0][0][0])
-        # img = img.resize([ax_max, ax_max], resample=0)
-        # plt.imshow(img)
-        #
-        # plt.show(block=False)
+        im = 0
+        str_draw(im, imgid, centers, norms, locs_lf, locs_rt, img=py_data[0][0][im], im_size=base_size)
+
+        return None
         ################################
+
+
 
 
 

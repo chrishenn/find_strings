@@ -37,7 +37,7 @@ class Options(Options_Super):
         # training options
         parser.add_argument('--n_epochs',  type=int,   default=1, help='number of training epochs')
 
-        parser.add_argument('--batch_size',   type=int, default=1, help='batch size')
+        parser.add_argument('--batch_size',   type=int, default=4, help='batch size')
 
         # compute options
         parser.add_argument('--dev_ids',   type=str,  default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use cpu or -1 for CPU')
