@@ -216,6 +216,12 @@ def train(model, opt):
             if i % opt.print_freq == 0 or (i+1) == len(loader):
                 print('BATCH: ', i, '/', loader_len)
 
+                print(model.count_avg / total_batches)
+                print(model.n_ccpts / total_batches)
+                print(model.maxes / total_batches)
+                print(model.devs / total_batches)
+                print()
+
         print('\n EPOCH: ', epoch)
 
         if opt.save_freq is not None and (epoch+1)%opt.save_freq == 0:

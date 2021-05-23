@@ -20,7 +20,7 @@ t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_bru
 t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_brute/build/libfrnn_ts.so")
 t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_tree_brute/build/libfrnn_ts.so")
 
-# t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/write_row/build/libwrite_row.so")
+# t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/stack_cols/build/libwrite_row.so")
 
 t.manual_seed(7)
 

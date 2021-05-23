@@ -10,9 +10,9 @@ class Options(Options_Super):
 
     def initialize(self, parser):
 
-        parser.add_argument('--exp_name', type=str,   default='edges-oodl r1248-32 avg1234sum32 oo-sum-pool', help='')
+        parser.add_argument('--exp_name', type=str,   default='edges-oodl r16 c512 oo-sum glob-avg', help='')
 
-        parser.add_argument('--debug',    type=bool, default=False, help='debug ')
+        parser.add_argument('--debug',    type=bool, default=True, help='debug ')
 
         # data options
         # parser.add_argument('--base_dataset', type=str, default='art_arcs', help='chooses what datasets are loaded.')
@@ -63,7 +63,7 @@ class Options(Options_Super):
         parser.add_argument('--load_from',   type=str, default=None, help='')
 
         parser.add_argument('--print_freq',  type=int,  default=100, help='frequency to print progress (in batches)')
-        parser.add_argument('--vis_network', type=bool, default=True, help='set True for loss visualization')
+        parser.add_argument('--vis_network', type=bool, default=False, help='set True for loss visualization')
         parser.add_argument('--vis_file',    type=bool, default=False, help='write visualization to file. Run options/gen_graph_from_file.py with a graphs/*.log file.')
 
         self.parser = parser

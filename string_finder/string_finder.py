@@ -12,6 +12,7 @@ from torch import nn as nn
 from torch.nn import functional as F
 from torchvision import transforms as transforms
 
+import ccpt.ccpt
 from datasets.artificial_dataset import make_topbox, make_topbox_plus, make_nine, make_vbar, make_blob, make_tetris, make_topbar, make_circle_seed
 from frnn_opt_brute import frnn_cpu
 from string_finder import oodl_utils, oodl_draw
@@ -24,7 +25,7 @@ t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_bru
 # t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_brute/build/libfrnn_ts.so")
 # t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_tree_brute/build/libfrnn_ts.so")
 
-# t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/write_row/build/libwrite_row.so")
+t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/stack_cols/build/libstack_cols.so")
 
 t.manual_seed(7)
 
@@ -991,12 +992,60 @@ class Seg_Strings(nn.Module):
         thresh_lo, thresh_hi = 0.0, 0.1
         self.canny = Canny(opt, thresh_lo, thresh_hi)
 
-        self.net = OONet_local(self.opt)
+        c_out = 256
+
+        std = 0.1
+        layer_1 = nn.Linear(70*5, 32)
+        bn_1 = nn.BatchNorm1d(32, track_running_stats=False)
+        rl_1 = nn.ReLU()
+        layer_2 = nn.Linear(32, 64)
+        bn_2 = nn.BatchNorm1d(64, track_running_stats=False)
+        rl_2 = nn.ReLU()
+        layer_3 = nn.Linear(64, 128)
+        bn_3 = nn.BatchNorm1d(128, track_running_stats=False)
+        rl_3 = nn.ReLU()
+        layer_4 = nn.Linear(128, c_out)
+        bn_4 = nn.BatchNorm1d(c_out, track_running_stats=False)
+        rl_4 = nn.ReLU()
+        nn.init.normal_(layer_1.weight.data, mean=0, std=std)
+        nn.init.normal_(layer_2.weight.data, mean=0, std=std)
+        nn.init.normal_(layer_3.weight.data, mean=0, std=std)
+        nn.init.normal_(layer_4.weight.data, mean=0, std=std)
+
+        self.layers = nn.Sequential(
+            layer_1, bn_1, rl_1,
+            layer_2, bn_2, rl_2,
+            layer_3, bn_3, rl_3,
+            layer_4, bn_4, rl_4,
+        )
+
+        bn = nn.BatchNorm1d(c_out, track_running_stats=False)
+        fc = nn.Linear(c_out, opt.n_classes)
+        relu = nn.ReLU()
+        self.bn_fc_relu = nn.Sequential(bn, fc, relu)
+
+    def avg_pool(self, data):
+        tex, imgid, batch_size = data[0], data[1], data[-1]
+        out = t.zeros([batch_size, tex.size(1)], dtype=tex.dtype, device=tex.device)
+        out = out.index_add(0, imgid, tex)
+
+        counts = t.zeros(batch_size, dtype=tex.dtype, device=tex.device).index_add_(0, imgid, t.ones_like(imgid).float())
+        counts = t.where(counts.lt(1), t.ones_like(counts), counts)
+        out = out.div(counts[:, None])
+        return out
+
+    def sum_pool(self, data):
+        tex, imgid, batch_size = data[0], data[1], data[-1]
+        out = t.zeros([batch_size, tex.size(1)], dtype=tex.dtype, device=tex.device)
+        out = out.index_add(0, imgid, tex)
+        return out
 
     def forward(self, batch):
 
         dev = batch.device
         batch_size = t.tensor(batch.size(0), device=dev)
+
+        # for i,elem in enumerate(self.projectors): self.projectors[i] = elem.cuda()
 
         b_edges, sobel = self.canny(batch)
 
@@ -1010,21 +1059,56 @@ class Seg_Strings(nn.Module):
 
         tex = batch[ids[:,0], :, ids[:,2], ids[:,3]]
 
-        if self.opt.debug:
-            oodl_draw.oodl_draw(0, pts=pts, imgid=imgid, img=b_edges[0], draw_obj=True)
-            oodl_draw.oodl_draw(img=batch[0])
 
-        out = self.net((tex,pts,imgid,batch_size))
+        edges = t.ops.my_ops.frnn_ts_kernel(pts, imgid, t.tensor(np.sqrt(2) + 0.01).cuda(), t.tensor(1).cuda(), batch_size)[0]
+        ccids = ccpt.ccpt.get_ccpt(edges, imgid).long()
 
-        if self.opt.debug: return None
-        else: return out
+        item_feat = t.cat([tex, orientations], 1)
+        out_size = ccids.max().item()+1
+        item_feat = t.ops.stack_op.stack_bind(item_feat, ccids, out_size)[0]
 
+        nonempty = ccids.bincount().gt(0)
+        nonempty_pad = F.pad(nonempty, [0,ccids.size(0)-nonempty.size(0)])
+
+        imid_ccid = t.stack([imgid, ccids], 1).unique(dim=0)
+        imgid = t.empty_like(ccids).index_put_((imid_ccid[:,1],), imid_ccid[:,0])[nonempty_pad]
+
+        item_feat = item_feat[nonempty]
+
+        data = self.layers(item_feat)
+        data = self.avg_pool((data,imgid,batch_size))
+        data = self.bn_fc_relu(data)
+        return data
+
+
+
+
+        # if self.opt.debug:
+        #     oodl_draw.oodl_draw(0, pts=pts, imgid=imgid, img=b_edges[0], groupids=ccids, edges=edges)
+        #     oodl_draw.oodl_draw(img=batch[0])
+        #
+        # break_30 = t.rand(edges.size(0)).gt(0.3)
+        # edges = edges[break_30]
+        #
+        # ccids = ccpt.ccpt.get_ccpt(edges, imgid)
+        #
+        # if self.opt.debug:
+        #     oodl_draw.oodl_draw(0, pts=pts, imgid=imgid, img=b_edges[0], groupids=ccids, edges=edges)
+
+
+
+
+        # if self.opt.debug: return None
+        # else: return out
+
+
+        # out = self.net((tex,pts,imgid,batch_size))
         # edges = t.ops.my_ops.frnn_ts_kernel(locs, imgid, t.tensor(np.sqrt(2)+0.01).cuda(), t.tensor(1).cuda(), batch_size)[0]
         #
         # oodl_draw.oodl_draw(0, pts=locs, imgid=imgid, edges=edges, img=b_edges[0])
         # oodl_draw.oodl_draw(img=batch[0])
 
-        # print("no")
+
 
 
 

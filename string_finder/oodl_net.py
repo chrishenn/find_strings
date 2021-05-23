@@ -12,29 +12,32 @@ class OONet_local(nn.Module):
         super().__init__()
         self.opt = opt
 
-        self.c_out = c_out = 256
-        layer_1 = OOLayer(opt, 1, opt.c_init, 32, ptwise=True, bn=True, relu=True)
-        group_1 = OOPool(opt)
-        layer_2 = OOLayer(opt, 2, 32, 64, ptwise=True, bn=True, relu=True)
-        group_2 = OOPool(opt)
-        layer_3 = OOLayer(opt, 4, 64, 128, ptwise=True, bn=True, relu=True)
-        group_3 = OOPool(opt)
-        layer_4 = OOLayer(opt, 8, 128, c_out, ptwise=True, bn=True, relu=True)
-        layer_5 = OOLayer(opt, 32, c_out, c_out, ptwise=True, bn=True, relu=True)
+        self.c_out = c_out = 512
+        layer_1 = OOLayer(opt, 16, opt.c_init, 512, ptwise=True, bn=True, relu=True)
+        # group_1 = OOPool(opt)
+        # layer_2 = OOLayer(opt, 2, 32, 64, ptwise=True, bn=True, relu=True)
+        # group_2 = OOPool(opt)
+        # layer_3 = OOLayer(opt, 4, 64, 128, ptwise=True, bn=True, relu=True)
+        # group_3 = OOPool(opt)
+        # layer_4 = OOLayer(opt, 8, 128, 256, ptwise=True, bn=True, relu=True)
+        #
+        # layer_5 = OOLayer(opt, 16, 256, c_out, ptwise=True, bn=True, relu=True)
+        # layer_6 = OOLayer(opt, 32, c_out, c_out, ptwise=True, bn=True, relu=True)
 
         self.layers = nn.Sequential()
         self.layers.add_module("layer_1", layer_1)
-        self.layers.add_module("group_1", group_1)
-
-        self.layers.add_module("layer_2", layer_2)
-        self.layers.add_module("group_2", group_2)
-
-        self.layers.add_module("layer_3", layer_3)
-        self.layers.add_module("group_3", group_3)
-
-        self.layers.add_module("layer_4", layer_4)
-
-        self.layers.add_module("layer_5", layer_5)
+        # self.layers.add_module("group_1", group_1)
+        #
+        # self.layers.add_module("layer_2", layer_2)
+        # self.layers.add_module("group_2", group_2)
+        #
+        # self.layers.add_module("layer_3", layer_3)
+        # self.layers.add_module("group_3", group_3)
+        #
+        # self.layers.add_module("layer_4", layer_4)
+        #
+        # self.layers.add_module("layer_5", layer_5)
+        # self.layers.add_module("layer_6", layer_6)
 
         bn = nn.BatchNorm1d(c_out, track_running_stats=False)
         fc = nn.Linear(c_out, opt.n_classes)
@@ -82,8 +85,8 @@ class OONet_local(nn.Module):
         orig_tex, pred_tex, target_tex, class_tex = textures
         pts, imgid, edges, batch_size = pts_geom
 
-        # data = self.avg_pool((class_tex,imgid,batch_size))
-        data = self.sum_pool((class_tex,imgid,batch_size))
+        data = self.avg_pool((class_tex,imgid,batch_size))
+        # data = self.sum_pool((class_tex,imgid,batch_size))
         data = self.bn_fc_relu(data)
         return data
 
@@ -125,7 +128,7 @@ def find_geom(pts_geom, lin_radius, scale_radius):
 class OOLayer(nn.Module):
     def __init__(self, opt, radius_factor, chan_in, chan_out, ptwise=True, bn=True, relu=True):
         super().__init__()
-        self.chan_out = chan_out
+        self.chan_in, self.chan_out = chan_in, chan_out
 
         if radius_factor is not None:
             lin_radius = radius_factor + 0.05
@@ -215,9 +218,12 @@ class OOLayer(nn.Module):
         class_tex = tex_active + self.kernel_bias
 
         ## av_pool
-        if self.chan_out < 256:
-            counts = t.ones_like(class_tex[:,0]).index_add_(0, edges[:,1], t.ones_like(edges[:,1]).float())
-            class_tex = class_tex.div(counts[:,None])
+        # if self.chan_in < 256:
+        #     counts = t.ones_like(class_tex[:,0]).index_add_(0, edges[:,1], t.ones_like(edges[:,1]).float())
+        #     class_tex = class_tex.div(counts[:,None])
+
+        # counts = t.ones_like(class_tex[:, 0]).index_add_(0, edges[:, 1], t.ones_like(edges[:, 1]).float())
+        # class_tex = class_tex.div(counts[:, None])
 
         ## bn + relu
         if hasattr(self, 'bn'): class_tex = self.bn(class_tex)
