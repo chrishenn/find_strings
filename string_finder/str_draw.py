@@ -37,7 +37,7 @@ def str_draw(draw_im, imgid, centers, norms, locs_lf, locs_rt, p_rowids=None, im
         p_vecs = p_vecs[im_mask]
         p_colors = p_colors[im_mask]
 
-        ax.quiver(seg_centers_[:, 1], seg_centers_[:, 0], p_vecs[:, 1], p_vecs[:, 0], angles='xy', units='xy',
+        ax.quiver(seg_centers_[im_mask][:, 1], seg_centers_[im_mask][:, 0], p_vecs[:, 1], p_vecs[:, 0], angles='xy', units='xy',
                   scale=1, width=0.01 * mag, headwidth=h_size, headlength=h_size + 2, headaxislength=h_size + 1, color=p_colors)
 
     seg_centers_ = seg_centers_[im_mask]

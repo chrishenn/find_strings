@@ -24,7 +24,7 @@ class OODL_Vis:
             if filename is not None: print("SUCCESS: visdom init write to file")
             if not offline: print("SUCCESS: visdom init connected to network server")
 
-            self.names = ['Train Loss (*50)', 'Test Loss (*50)', 'Train Error (%)', 'Test Error (%)']
+            self.names = ['Train Loss (*50)', 'Test Loss (*50)', 'Train Acc@1 (%)', 'Test Acc@1 (%)']
             self.win = None
             self.env = 'main'
             self.exp_name = opt.exp_name
@@ -54,11 +54,11 @@ class OODL_Vis:
 
     def vis_draw(self, epoch_stats):
 
-        common_X = np.array([epoch_stats[0]])
+        common_X = np.array([epoch_stats[0]]) + 1
         train_loss = np.array([epoch_stats[1]]) * 50
         test_loss = np.array([epoch_stats[3]]) * 50
-        train_err = np.array([100 - epoch_stats[2]])
-        test_err = np.array([100 - epoch_stats[4]])
+        train_err = np.array([epoch_stats[2]])
+        test_err = np.array([epoch_stats[4]])
         losses = [train_loss, test_loss, train_err, test_err]
 
         if self.win is None:
@@ -68,6 +68,7 @@ class OODL_Vis:
                 opts=dict(
                     xlabel='Epoch',
                     # xtickstep=1,
+                    xtickmin=0,
                     ylabel='Loss and Error',
                     ytickstep=10,
                     title=self.exp_name,

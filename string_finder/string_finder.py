@@ -15,11 +15,12 @@ from torchvision import transforms as transforms
 from datasets.artificial_dataset import make_topbox, make_topbox_plus, make_nine, make_vbar, make_blob, make_tetris, make_topbar, make_circle_seed
 from frnn_opt_brute import frnn_cpu
 from string_finder import oodl_utils, oodl_draw
+from string_finder.oodl_net import OONet_local
 from string_finder.oodl_utils import regrid
 from string_finder.str_draw import str_draw
 from unionfind.unionfind import UnionFind
 
-# t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_brute/build/libfrnn_ts.so")
+t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_opt_brute/build/libfrnn_ts.so")
 # t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_brute/build/libfrnn_ts.so")
 # t.ops.load_library(os.path.split(os.path.split(__file__)[0])[0] + "/frnn_bipart_tree_brute/build/libfrnn_ts.so")
 
@@ -436,7 +437,8 @@ class Pyramid_Strings(nn.Module):
         thresh_lo, thresh_hi = 0.0, 0.1
         self.canny = Canny(opt, thresh_lo, thresh_hi)
 
-        self.py_sizes = [64, 32, 16]
+        # self.py_sizes = [64, 32, 16]
+        self.py_sizes = [256, 64]
         self.interp_mode = 'area'
 
         self.grids = list()
@@ -471,11 +473,8 @@ class Pyramid_Strings(nn.Module):
             self.img_ids.append( imgid )
 
 
-    ## NOTE: only works for batch size == 1
     def forward(self, batch):
         '''
-        ## NOTE: only works for batch size == 1
-
         string format:
             strs[i] = [ end_lf[y,x], end_rt[y,x], str_norm[dy,dx], dev-frac ]
             where dev-frac gives a fraction of deviation of the string on that row, relative to its length
@@ -491,18 +490,22 @@ class Pyramid_Strings(nn.Module):
 
         ## at high res
         b_edges, sobel = self.canny(batch)
-        b_edges[b_edges.gt(1e-6)] = 1
-
-        # oodl_utils.tensor_imshow(b_edges[0])
-
-        ## to starting res
-        base_size = self.py_sizes[0]
-        b_edges, sobel = F.interpolate(b_edges, size=base_size, mode=self.interp_mode), F.interpolate(sobel, size=base_size, mode=self.interp_mode)
-        b_edges[b_edges.gt(1e-6)] = 1
+        # b_edges[b_edges.gt(1e-6)] = 1
 
         # oodl_utils.tensor_imshow(b_edges[0])
         # oodl_utils.tensor_imshow(b_edges[1])
         # oodl_utils.tensor_imshow(b_edges[2])
+
+        ## to starting res
+        base_size = self.py_sizes[0]
+        mode = 'bilinear'
+        b_edges, sobel = F.interpolate(b_edges, size=base_size, mode=mode, align_corners=True), F.interpolate(sobel, size=base_size, mode=mode, align_corners=True)
+        b_edges = t.clamp(b_edges, 0,1)
+        # b_edges[b_edges.gt(1e-6)] = 1
+
+        oodl_utils.tensor_imshow(b_edges[0])
+        oodl_utils.tensor_imshow(b_edges[1])
+        oodl_utils.tensor_imshow(b_edges[2])
         # oodl_utils.tensor_imshow(b_edges[3])
 
         ## list of different sizes
@@ -510,11 +513,12 @@ class Pyramid_Strings(nn.Module):
         py_data.append((b_edges.clone(), sobel.clone()))
         for size in self.py_sizes[1:]:
             b_edges, sobel = F.interpolate(py_data[0][0], size=size, mode=self.interp_mode), F.interpolate(py_data[0][1], size=size, mode=self.interp_mode)
-            b_edges[b_edges.gt(1e-6)] = 1
+            # b_edges[b_edges.gt(1e-6)] = 1
+            # b_edges[b_edges.lt(0.1)] = 0
 
-            # oodl_utils.tensor_imshow(b_edges[0])
-            # oodl_utils.tensor_imshow(b_edges[1])
-            # oodl_utils.tensor_imshow(b_edges[2])
+            oodl_utils.tensor_imshow(b_edges[0])
+            oodl_utils.tensor_imshow(b_edges[1])
+            oodl_utils.tensor_imshow(b_edges[2])
             # oodl_utils.tensor_imshow(b_edges[3])
 
             py_data.append((b_edges.clone(), sobel.clone()))
@@ -581,28 +585,11 @@ class Pyramid_Strings(nn.Module):
         # return strings, p_rowids
 
         ###### TEST ####################
-        im = 0
-        str_draw(im, imgid, centers, norms, locs_lf, locs_rt, p_rowids=None, img=py_data[0][0][im], im_size=base_size)
+        for im in [0,1]:
+            str_draw(im, imgid, centers, norms, locs_lf, locs_rt, p_rowids, img=py_data[0][0][im], im_size=base_size)
 
         return None
         ################################
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 class String_Finder(nn.Module):
     def __init__(self, opt):
@@ -996,7 +983,48 @@ class String_Finder(nn.Module):
 
 
 
+class Seg_Strings(nn.Module):
+    def __init__(self, opt):
+        super().__init__()
+        self.opt = opt
 
+        thresh_lo, thresh_hi = 0.0, 0.1
+        self.canny = Canny(opt, thresh_lo, thresh_hi)
+
+        self.net = OONet_local(self.opt)
+
+    def forward(self, batch):
+
+        dev = batch.device
+        batch_size = t.tensor(batch.size(0), device=dev)
+
+        b_edges, sobel = self.canny(batch)
+
+        ids = b_edges.nonzero()
+        orientations = sobel.permute(0,2,3,1)[ids[:,[0,2,3]].split(1, dim=1)].squeeze()
+        angles = t.atan2(orientations[:,0], orientations[:,1]).unsqueeze(1)
+        imgid = ids[:,0].long().contiguous()
+        locs = ids[:, -2:].float()
+
+        pts = t.cat([locs, t.zeros_like(locs[:,0,None]), angles, t.ones_like(angles)], 1).contiguous()
+
+        tex = batch[ids[:,0], :, ids[:,2], ids[:,3]]
+
+        if self.opt.debug:
+            oodl_draw.oodl_draw(0, pts=pts, imgid=imgid, img=b_edges[0], draw_obj=True)
+            oodl_draw.oodl_draw(img=batch[0])
+
+        out = self.net((tex,pts,imgid,batch_size))
+
+        if self.opt.debug: return None
+        else: return out
+
+        # edges = t.ops.my_ops.frnn_ts_kernel(locs, imgid, t.tensor(np.sqrt(2)+0.01).cuda(), t.tensor(1).cuda(), batch_size)[0]
+        #
+        # oodl_draw.oodl_draw(0, pts=locs, imgid=imgid, edges=edges, img=b_edges[0])
+        # oodl_draw.oodl_draw(img=batch[0])
+
+        # print("no")
 
 
 

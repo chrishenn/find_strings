@@ -12,7 +12,7 @@ import cv2
 
 
 
-def oodl_draw(visimg_id, pts=None, imgid=None, img=None, edges=None, as_vecs=None, o_vectors=None, strs=None, groupids=None, draw_obj=False, dot_locs=None,
+def oodl_draw(visimg_id=None, pts=None, imgid=None, img=None, edges=None, as_vecs=None, o_vectors=None, strs=None, groupids=None, draw_obj=False, dot_locs=None,
                          o_scale=1, max_size=32, linewidths=0.01, dpi=150):
     '''
     Each element to draw is composited onto a singular canvas, and is drawn from the image given by visimg_id, indexed into

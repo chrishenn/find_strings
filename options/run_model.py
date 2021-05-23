@@ -10,22 +10,22 @@ class Options(Options_Super):
 
     def initialize(self, parser):
 
-        parser.add_argument('--exp_name', type=str,   default='hand_drawn', help='')
+        parser.add_argument('--exp_name', type=str,   default='edges-oodl r1248-32 avg1234sum32 oo-sum-pool', help='')
 
-        parser.add_argument('--debug',    type=bool, default=True, help='debug ')
+        parser.add_argument('--debug',    type=bool, default=False, help='debug ')
 
         # data options
-        parser.add_argument('--base_dataset', type=str, default='hand_drawn_q_arcs', help='chooses what datasets are loaded.')
+        # parser.add_argument('--base_dataset', type=str, default='art_arcs', help='chooses what datasets are loaded.')
 
-        # parser.add_argument('--base_dataset', type=str, default='cifar', help='chooses what datasets are loaded.')
+        parser.add_argument('--base_dataset', type=str, default='cifar', help='chooses what datasets are loaded.')
         # parser.add_argument('--base_dataset', type=str, default='mnist', help='chooses what datasets are loaded.')
         # parser.add_argument('--base_dataset', type=str, default='tiny-imagenet', help='chooses what datasets are loaded.')
 
         parser.add_argument('--oneim_dataset', type=bool, default=False, help='')
 
         parser.add_argument('--data_dir',     type=str, default='/home/chris/Documents/find_strings/data', help='chooses what datasets are loaded.')
-        parser.add_argument('--img_size',     type=int, default=600, help='square image; integer size for one side')
-        parser.add_argument('--img_resize',     type=int, default=None, help='')
+        parser.add_argument('--img_size',     type=int, default=32, help='square image; integer size for one side')
+        parser.add_argument('--img_resize',   type=int, default=None, help='')
 
         parser.add_argument('--train_datamode', type=str,  default='train', help='train data mode: set to "train" for training-set; set to "test" for test set')
         parser.add_argument('--train_size',     type=int,  default=None, help='specify dataset size in images - at least 1/30th of the full size. Set "None" for full size.')
@@ -34,13 +34,24 @@ class Options(Options_Super):
         parser.add_argument('--train_normalize',type=bool, default=False, help='normalize train images to range=(-1,1)')
         parser.add_argument('--train_shuffle',  type=bool, default=True, help='random-shuffle train images')
 
-        # training options
-        parser.add_argument('--n_epochs',  type=int,   default=1, help='number of training epochs')
+        parser.add_argument('--test_datamode', type=str,  default='test', help='train data mode: set to "train" for training-set; set to "test" for test set')
+        parser.add_argument('--test_size',     type=int,  default=None, help='specify dataset size in images - at least 1/30th of the full size. Set "None" for full size.')
+        parser.add_argument('--test_rotate',   type=bool, default=False, help='set True to randomly-rotate train images')
+        parser.add_argument('--test_scale',    type=float,default=False, help='randomly scale train images in given range')
+        parser.add_argument('--test_normalize',type=bool, default=False, help='normalize train images to range=(-1,1)')
+        parser.add_argument('--test_shuffle',  type=bool, default=True, help='random-shuffle train images')
 
-        parser.add_argument('--batch_size',   type=int, default=4, help='batch size')
+        # training options
+        parser.add_argument('--n_epochs',  type=int,   default=20, help='number of training epochs')
+
+        parser.add_argument('--optimizer', type=str,   default='torch.optim.Adam', help='optimizer algorithm')
+        parser.add_argument('--optim_args', type=dict,   default=dict(lr=0.001), help='optimizer arguments')
+
+        parser.add_argument('--batch_size',   type=int, default=40, help='batch size')
+        parser.add_argument('--accum_grad', type=int,   default=1, help='accum gradients')
 
         # compute options
-        parser.add_argument('--dev_ids',   type=str,  default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use cpu or -1 for CPU')
+        parser.add_argument('--dev_ids',   type=str,  default='1', help='gpu ids: e.g. 0  0,1,2, 0,2. use cpu or -1 for CPU')
         parser.add_argument('--n_threads', type=int,  default=2, help='data loader cpu threads for each process.')
 
         parser.add_argument('--amp',            type=bool, default=False, help='turn amp on or off')
@@ -51,8 +62,8 @@ class Options(Options_Super):
         parser.add_argument('--save_folder', type=str, default='/home/chris/Documents/find_strings/checkpoints/', help='')
         parser.add_argument('--load_from',   type=str, default=None, help='')
 
-        parser.add_argument('--print_freq',  type=int,  default=10, help='frequency to print progress (in batches)')
-        parser.add_argument('--vis_network', type=bool, default=False, help='set True for loss visualization')
+        parser.add_argument('--print_freq',  type=int,  default=100, help='frequency to print progress (in batches)')
+        parser.add_argument('--vis_network', type=bool, default=True, help='set True for loss visualization')
         parser.add_argument('--vis_file',    type=bool, default=False, help='write visualization to file. Run options/gen_graph_from_file.py with a graphs/*.log file.')
 
         self.parser = parser

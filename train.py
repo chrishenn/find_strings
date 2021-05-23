@@ -4,6 +4,7 @@ import PIL
 
 import torch as t
 import torch.utils.data
+import torch.nn as nn
 
 import torchvision
 from torchvision import transforms
@@ -21,9 +22,7 @@ from datasets.oneim_dataset import OneIm_Dataset
 from datasets.resizing_dataset import Resizing_Dataset
 
 import string_finder.string_finder as string_finder
-
-
-
+from string_finder import meter
 
 
 def scale_aware_collator(data):
@@ -81,10 +80,12 @@ def get_loader(opt, train):
     elif opt.base_dataset == 'tiny-imagenet':
         if train: dataset = torchvision.datasets.ImageFolder(os.path.join(data_dir, 'tiny-imagenet-200/train'), transform)
         else: dataset = torchvision.datasets.ImageFolder(os.path.join(data_dir, 'tiny-imagenet-200/test'), transform)
-    elif 'hand_drawn' in opt.base_dataset:
-        dataset = torchvision.datasets.ImageFolder(os.path.join(data_dir, opt.base_dataset), transform)
     else:
-        print('invalid base_dataset indicated; exiting'); exit(1)
+        data_folder = os.path.join(data_dir, opt.base_dataset)
+        if os.path.exists(data_folder):
+            dataset = torchvision.datasets.ImageFolder(data_folder, transform)
+        else:
+            print('looked for folder', data_folder,' to load ImageFolder dataset; folder does not exist'); exit(1)
 
     if opt.oneim_dataset:
         dataset = OneIm_Dataset(opt, dataset)
@@ -121,6 +122,76 @@ def get_loader(opt, train):
     loader = torch.utils.data.DataLoader(dataset, batch_size=opt.batch_size, shuffle=shuffle, num_workers=opt.n_threads, pin_memory=False, collate_fn=collate_fn, drop_last=True)
     return loader
 
+
+def train_classify(model, opt):
+
+    opt.optimizer = eval(opt.optimizer)(model.parameters(), **opt.optim_args)
+    opt.scaler = amp.GradScaler(enabled=opt.amp)
+    opt.crit = nn.CrossEntropyLoss()
+
+    total_iters = 0
+    train_loss_meter = meter.AverageMeter('Train Loss', ':.4e')
+    train_top1_meter = meter.AverageMeter('Train Acc@1', ':6.2f')
+    test_loss_meter = meter.AverageMeter('Test Loss', ':.4e')
+    test_top1_meter = meter.AverageMeter('Test Acc@1', ':6.2f')
+    train_progress = meter.ProgressMeter(len(opt.train_loader), train_loss_meter, train_top1_meter, prefix='train: ')
+    test_progress = meter.ProgressMeter(len(opt.test_loader), test_loss_meter, test_top1_meter, prefix='TEST: ')
+
+    for epoch_2 in range( 2*opt.n_epochs ):
+        phase_train = (epoch_2%2==0)
+        epoch = epoch_2 // 2
+
+        if phase_train:
+            epoch_time = time.time()
+            model.train()
+
+            t.set_grad_enabled(True)
+            loader = opt.train_loader
+
+            train_loss_meter.reset(); train_top1_meter.reset()
+            loss_meter, top1_meter = train_loss_meter, train_top1_meter
+            progress = train_progress
+        else:
+            t.set_grad_enabled(False)
+            loader = opt.test_loader
+
+            test_loss_meter.reset(); test_top1_meter.reset()
+            loss_meter, top1_meter = test_loss_meter, test_top1_meter
+            progress = test_progress
+
+        for i, data in enumerate(loader, 0):
+            total_iters += 1
+
+            inputs, labels = data
+            labels = labels.cuda()
+            inputs = tuple(te.cuda() for te in inputs) if isinstance(inputs, tuple) else inputs.cuda()
+
+            with amp.autocast(enabled=opt.amp):
+                outputs = model(inputs)
+                loss = opt.crit(outputs, labels)
+
+            if phase_train:
+                opt.scaler.scale(loss).backward()
+                if (i+1) % opt.accum_grad == 0:
+                    opt.scaler.step(opt.optimizer)
+                    opt.scaler.update()
+                    opt.optimizer.zero_grad()
+
+            if (i + 1) % 10 == 0:
+                acc1 = meter.accuracy(outputs, labels, topk=(1,))
+                loss_meter.update(loss.item(), opt.batch_size)
+                top1_meter.update(acc1[0].item(), opt.batch_size)
+
+            if (i+1) % opt.print_freq == 0 or (i+1) == len(loader):
+                progress.print(i+1, epoch)
+
+        if (not phase_train) and opt.vis is not None:
+            opt.vis.vis_draw([epoch, train_loss_meter.get_avg(), train_top1_meter.get_avg(), test_loss_meter.get_avg(), test_top1_meter.get_avg()])
+
+        if (not phase_train):
+            print('learning rate = {0:.6f}'.format(opt.optimizer.param_groups[0]['lr']))
+            print("epoch time: ", time.time() - epoch_time, "\n\n")
+        else: print()
 
 
 def train(model, opt):
@@ -195,10 +266,11 @@ def init_environment(opt):
     torch.backends.cudnn.benchmark = True
 
     if opt.debug: os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-    else:           os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
+    else:         os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
 
     if opt.debug: opt.n_threads = 1
 
+    t.cuda.set_device(opt.dev_ids[0])
 
     # torch.multiprocessing.set_start_method('forkserver', force=True)
     # torch.multiprocessing.set_start_method('spawn', force=True)
@@ -216,10 +288,12 @@ def train_single(opt):
     init_environment(opt)
     opt.vis = init_vis(opt)
 
-    opt.train_loader = get_loader(opt, True)
+    opt.train_loader = get_loader(opt, train=True)
+    opt.test_loader = get_loader(opt, train=False)
 
     # model = string_finder.String_Finder(opt)
-    model = string_finder.Pyramid_Strings(opt)
+    # model = string_finder.Pyramid_Strings(opt)
+    model = string_finder.Seg_Strings(opt)
     print(model)
     model = model.to(opt.dev_ids[0])
 
@@ -231,7 +305,8 @@ def train_single(opt):
         print("load done")
 
     tic = time.time()
-    train(model, opt)
+    # train(model, opt)
+    train_classify(model, opt)
     print('ran ', opt.n_epochs, ' epochs in ', time.time() - tic)
 
 ##### Entry Point: Luanch Training Loop for Configuration
