@@ -299,7 +299,8 @@ def train_single(opt):
 
     # model = string_finder.String_Finder(opt)
     # model = string_finder.Pyramid_Strings(opt)
-    model = string_finder.Seg_Strings(opt)
+    # model = string_finder.Seg_Strings(opt)
+    model = string_finder.Interp_String(opt)
     print(model)
     model = model.to(opt.dev_ids[0])
 

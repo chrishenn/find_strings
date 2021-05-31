@@ -1110,6 +1110,200 @@ class Seg_Strings(nn.Module):
 
 
 
+class Interp_String(nn.Module):
+    def __init__(self, opt):
+        super().__init__()
+        self.opt = opt
+
+        thresh_lo, thresh_hi = 0.0, 0.1
+        self.canny = Canny(opt, thresh_lo, thresh_hi)
+
+    def forward(self, batch):
+        dev = batch.device
+        batch_size = t.tensor(batch.size(0), device=dev)
+
+        b_edges, sobel = self.canny(batch)
+
+        ids = b_edges.nonzero()
+        orientations = sobel.permute(0, 2, 3, 1)[ids[:, [0, 2, 3]].split(1, dim=1)].squeeze()
+        angles = t.atan2(orientations[:, 0], orientations[:, 1]).unsqueeze(1)
+        imgid_all = ids[:, 0].long().contiguous()
+        locs = ids[:, -2:].float()
+
+        ## pts_all = [y, x, z, angle, size]
+        pts_all = t.cat([locs, t.zeros_like(angles), angles, t.ones_like(angles)], 1).contiguous()
+
+        ## "interpolate" real locations from 600x600 to 32x32
+        pts_all[:,[0,1]] = pts_all[:,[0,1]].mul(0.05333333)
+
+        edges_uni = t.ops.my_ops.frnn_ts_kernel(pts_all, imgid_all, t.tensor(1.5).cuda(), t.tensor(1).cuda(), batch_size)[0]
+        edges_bi = t.cat([edges_uni, t.stack([edges_uni[:, 1], edges_uni[:, 0]], 1)])
+
+        ## filter any ob's with a strictly-larger num of nebs than any one of their nebs
+        n_nebs = t.zeros_like(imgid_all).index_add_(0, edges_bi[:,1], t.ones_like(edges_bi[:,1]))
+        lf_gt = n_nebs[edges_uni[:,0]] > n_nebs[edges_uni[:,1]]
+        rt_gt = n_nebs[edges_uni[:,0]] < n_nebs[edges_uni[:,1]]
+
+        neb_gt = t.zeros_like(imgid_all).index_add_(0, edges_uni[:,0], lf_gt.long()).index_add_(0, edges_uni[:,1], rt_gt.long())
+        neb_gt = neb_gt.bool().logical_not()
+
+        pts_end = pts_all[neb_gt]
+        imgid_end = imgid_all[neb_gt]
+        oids_end = t.arange(pts_all.size(0))[neb_gt]
+
+        ## if nebs in "same" location, choose one at random to drop
+        edges_uni = t.ops.my_ops.frnn_ts_kernel(pts_end, imgid_end, t.tensor(1.2).cuda(), t.tensor(1).cuda(), batch_size)[0]
+
+        locs = pts_end[:,[0,1]]
+        locs_lf, locs_rt = locs[edges_uni[:,0]], locs[edges_uni[:,1]]
+        dists = locs_lf.sub(locs_rt).pow(2).sum(dim=1)
+        coinc_edges = dists.lt(0.9)
+        drop_ids = edges_uni[:,0][coinc_edges]
+        not_coinc = t.zeros_like(imgid_end).index_add_(0, drop_ids, t.ones_like(drop_ids).long()).bool().logical_not()
+
+        pts_end = pts_end[not_coinc]
+        imgid_end = imgid_end[not_coinc]
+        oids_end = oids_end[not_coinc]
+
+
+        # for i in [0,1,2,3]:
+        #     oodl_draw.oodl_draw(i, pts=pts_end, imgid=imgid_end, draw_obj=True, max_size=32, img=batch[i])
+        # for i in [4, 5]:
+        #     oodl_draw.oodl_draw(i, pts=pts_all, imgid=imgid_all, draw_obj=True, max_size=32, img=batch[i])
+
+        ######
+        ## pts and imgid now give 'endpoints' for arcs ; oids_end gives the indexes of these endpoints in the pts_all set of all pts
+        ######
+
+        ######
+        ## find equidistant nebs ('smoothly' distributed)
+
+
+        ################# AVG METHOD
+
+        ## endpts will always be active
+        # active = t.rand(imgid_all.size(0)).lt(0.125).long().index_fill_(0, oids_end, 1)
+        # oids = t.arange(active.size(0))
+        # pinned = t.empty([0], dtype=t.long)
+        #
+        # for i in range(300):
+        #     pts_act, imgid_act = pts_all[active.bool()], imgid_all[active.bool()]
+        #     locs_act = pts_act[:, [0, 1]]
+        #     oids_act = oids[active.bool()]
+        #
+        #     edges_uni = t.ops.my_ops.frnn_ts_kernel(pts_act, imgid_act, t.tensor(1.2).cuda(), t.tensor(1).cuda(), batch_size)[0]
+        #     edges_bi = t.cat([edges_uni, t.stack([edges_uni[:, 1], edges_uni[:, 0]], 1)])
+        #
+        #     locs_lf, locs_rt = locs_act[edges_bi[:,0]], locs_act[edges_bi[:,1]]
+        #     dists = F.pairwise_distance(locs_lf, locs_rt)
+        #
+        #     counts = t.zeros_like(pts_act[:, 0]).index_add_(0, edges_bi[:, 1], t.ones_like(edges_bi[:, 1]).float())
+        #     av_dist = t.zeros_like(pts_act[:, 0]).index_add_(0, edges_bi[:,1], dists).div_(counts)
+        #
+        #     lo, hi = 0.98, 1.02
+        #     active[oids_act[av_dist.lt(lo)]] = 0
+        #
+        #     pinned = t.cat([pinned, oids_act[av_dist.ge(lo) & av_dist.le(hi)] ])
+        #     active[pinned] = 1
+        #
+        #     active[oids_end] = 1
+        #
+        #     ###################
+        #     n_success = pinned.size(0)
+        #
+        #     pts_tmp, imgid_tmp = pts_all[active.bool()], imgid_all[active.bool()]
+        #     if i % 100 == 0 or i + 1 == 300:
+        #         for j in [0] :
+        #
+        #             oodl_draw.oodl_draw(j, pts=pts_tmp, imgid=imgid_tmp, draw_obj=True, max_size=32)
+        #     ###################
+        #
+        #     active.index_fill_(0, t.randint(0, active.size(0), (active.size(0)//8,)), 1)
+
+
+
+
+
+
+
+        ################# STRICT METHOD
+
+        ## endpts will always be active
+        active = t.rand(imgid_all.size(0)).lt(0.05).long().index_fill_(0, oids_end, 1)
+        oids = t.arange(active.size(0))
+        pinned = t.empty([0], dtype=t.long)
+
+        for i in range(300):
+            pts_act, imgid_act = pts_all[active.bool()], imgid_all[active.bool()]
+            locs_act = pts_act[:, [0, 1]]
+            oids_act = oids[active.bool()]
+
+            edges_uni = t.ops.my_ops.frnn_ts_kernel(pts_act, imgid_act, t.tensor(1.2).cuda(), t.tensor(1).cuda(), batch_size)[0]
+
+            locs_lf, locs_rt = locs_act[edges_uni[:,0]], locs_act[edges_uni[:,1]]
+            dists = F.pairwise_distance(locs_lf, locs_rt)
+
+            lo, hi = 0.95, 1.05
+
+            passing = dists.gt(lo) & dists.lt(hi)
+            passing = edges_uni[passing].flatten()
+            passing = t.zeros_like(imgid_act).index_fill_(0, passing, 1)
+
+            fail = dists.le(lo) | dists.ge(hi)
+            fail = edges_uni[fail].flatten()
+            passing[fail] = 0
+
+            active[oids_act[fail]] = 0
+
+            pinned = t.cat([pinned, oids_act[passing.bool()]])
+            active[pinned] = 1
+
+            active[oids_end] = 1
+
+            ###################
+            n_success = pinned.size(0)
+
+            pts_tmp, imgid_tmp = pts_all[active.bool()], imgid_all[active.bool()]
+            if i + 1 == 300:
+                for j in [0,1,2,3] :
+                    oodl_draw.oodl_draw(j, pts=pts_tmp, imgid=imgid_tmp, draw_obj=True, max_size=32)
+            ###################
+
+            active.index_fill_(0, t.randint(0, active.size(0), (int(active.size(0)*0.05),)), 1)
+
+
+        pts_act, imgid_act = pts_all[active.bool()], imgid_all[active.bool()]
+        for i in [0,1,2,3]:
+            oodl_draw.oodl_draw(i, pts=pts_act, imgid=imgid_act, draw_obj=True, max_size=32, img=batch[i])
+
+        print("no")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
