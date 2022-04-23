@@ -1,4 +1,7 @@
-/.idea/
-/build/
-/checkpoints/
-*.gz
+.idea/
+.vscode/
+build/
+__pycache__/
+*~*
+*.pth
+checkpoints/

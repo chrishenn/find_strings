@@ -1,4 +1,6 @@
 """
+Author: [find on github]
+
 A union-find disjoint set data structure.
 
 """
