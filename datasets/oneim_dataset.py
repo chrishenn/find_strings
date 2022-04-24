@@ -1,6 +1,6 @@
 import torch as t
 
-from string_finder import oodl_utils
+from string_finder import image_utils
 
 
 

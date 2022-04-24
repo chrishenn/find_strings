@@ -3,7 +3,7 @@ from torchvision import transforms
 
 import numpy as np
 
-from string_finder import oodl_utils
+from string_finder import image_utils
 
 
 ############### Artificial Testing Images
